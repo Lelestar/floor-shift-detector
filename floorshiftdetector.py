@@ -464,9 +464,15 @@ def run_pipeline_images(ref_bgr: np.ndarray, cur_bgr: np.ndarray, cfg: PipelineC
         )
 
     # --- Combine masks ---
-    combined = combine_masks(m_chroma, m_edge, cfg.combine_mode)
+    combined = None
+    if m_chroma is not None or m_edge is not None:
+        combined = combine_masks(m_chroma, m_edge, cfg.combine_mode)
+
     if m_texture is not None:
-        combined = combine_masks(combined, m_texture, "OR")
+        combined = m_texture if combined is None else combine_masks(combined, m_texture, "OR")
+
+    if combined is None:
+        raise ValueError("At least one change detection mask must be enabled")
 
     if m_shadow is not None:
         combined = cv2.bitwise_and(combined, cv2.bitwise_not(m_shadow))

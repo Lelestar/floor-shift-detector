@@ -16,6 +16,37 @@ from floorshiftdetector import PipelineConfig, run_pipeline_images
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 
+PARAM_KEYS = {
+    "enable_resize": "params_enable_resize",
+    "target_width": "params_target_width",
+    "color_space": "params_color_space",
+    "enable_clahe": "params_enable_clahe",
+    "enable_floor_roi": "params_enable_floor_roi",
+    "floor_ratio": "params_floor_ratio",
+    "enable_chroma_diff": "params_enable_chroma_diff",
+    "chroma_diff_thresh": "params_chroma_diff_thresh",
+    "enable_edge_diff": "params_enable_edge_diff",
+    "edge_diff_thresh": "params_edge_diff_thresh",
+    "enable_texture_diff": "params_enable_texture_diff",
+    "texture_diff_thresh": "params_texture_diff_thresh",
+    "enable_shadow_mask": "params_enable_shadow_mask",
+    "shadow_luma_thresh": "params_shadow_luma_thresh",
+    "shadow_chroma_small_thresh": "params_shadow_chroma_small_thresh",
+    "combine_mode": "params_combine_mode",
+    "enable_morphology": "params_enable_morphology",
+    "morph_close_ksize": "params_morph_close_ksize",
+    "morph_open_ksize": "params_morph_open_ksize",
+    "morph_iterations": "params_morph_iterations",
+    "enable_area_filter": "params_enable_area_filter",
+    "min_area": "params_min_area",
+    "max_area": "params_max_area",
+    "enable_bbox_filters": "params_enable_bbox_filters",
+    "min_aspect_ratio": "params_min_aspect_ratio",
+    "max_aspect_ratio": "params_max_aspect_ratio",
+    "must_be_in_floor_roi": "params_must_be_in_floor_roi",
+    "debug_scale": "params_debug_scale",
+}
+
 
 def load_image_from_upload(uploaded_file) -> Optional[np.ndarray]:
     if uploaded_file is None:
@@ -74,6 +105,43 @@ def filter_current_paths(paths: List[str]) -> List[str]:
     return out
 
 
+def init_param_defaults(cfg: PipelineConfig) -> None:
+    defaults = {
+        PARAM_KEYS["enable_resize"]: cfg.enable_resize,
+        PARAM_KEYS["target_width"]: cfg.target_width,
+        PARAM_KEYS["color_space"]: cfg.color_space,
+        PARAM_KEYS["enable_clahe"]: cfg.enable_clahe_on_luminance,
+        PARAM_KEYS["enable_floor_roi"]: cfg.enable_floor_roi,
+        PARAM_KEYS["floor_ratio"]: float(cfg.floor_roi_ratio),
+        PARAM_KEYS["enable_chroma_diff"]: cfg.enable_chroma_diff,
+        PARAM_KEYS["chroma_diff_thresh"]: cfg.chroma_diff_thresh,
+        PARAM_KEYS["enable_edge_diff"]: cfg.enable_edge_diff,
+        PARAM_KEYS["edge_diff_thresh"]: cfg.edge_diff_thresh,
+        PARAM_KEYS["enable_texture_diff"]: cfg.enable_texture_diff,
+        PARAM_KEYS["texture_diff_thresh"]: cfg.texture_diff_thresh,
+        PARAM_KEYS["enable_shadow_mask"]: cfg.enable_shadow_mask,
+        PARAM_KEYS["shadow_luma_thresh"]: cfg.shadow_luma_thresh,
+        PARAM_KEYS["shadow_chroma_small_thresh"]: cfg.shadow_chroma_small_thresh,
+        PARAM_KEYS["combine_mode"]: cfg.combine_mode,
+        PARAM_KEYS["enable_morphology"]: cfg.enable_morphology,
+        PARAM_KEYS["morph_close_ksize"]: cfg.morph_close_ksize,
+        PARAM_KEYS["morph_open_ksize"]: cfg.morph_open_ksize,
+        PARAM_KEYS["morph_iterations"]: cfg.morph_iterations,
+        PARAM_KEYS["enable_area_filter"]: cfg.enable_area_filter,
+        PARAM_KEYS["min_area"]: cfg.min_area,
+        PARAM_KEYS["max_area"]: cfg.max_area,
+        PARAM_KEYS["enable_bbox_filters"]: cfg.enable_bbox_filters,
+        PARAM_KEYS["min_aspect_ratio"]: float(cfg.min_aspect_ratio),
+        PARAM_KEYS["max_aspect_ratio"]: float(cfg.max_aspect_ratio),
+        PARAM_KEYS["must_be_in_floor_roi"]: cfg.must_be_in_floor_roi,
+        PARAM_KEYS["debug_scale"]: float(cfg.debug_scale),
+    }
+
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
 def build_config() -> PipelineConfig:
     cfg = st.session_state.get("cfg")
     if cfg is None:
@@ -91,59 +159,69 @@ def build_config() -> PipelineConfig:
         if any(not hasattr(cfg, name) for name in missing):
             cfg = PipelineConfig(show_debug_windows=False)
             st.session_state["cfg"] = cfg
+            for key in PARAM_KEYS.values():
+                st.session_state.pop(key, None)
+
+    init_param_defaults(cfg)
 
     with st.sidebar.form("params_form"):
         st.markdown("### Pipeline settings")
-        enable_resize = st.checkbox("Resize images", value=cfg.enable_resize)
-        target_width = st.slider("Target width", 320, 1920, cfg.target_width, step=40)
+        enable_resize = st.checkbox("Resize images", key=PARAM_KEYS["enable_resize"])
+        target_width = st.slider("Target width", 320, 1920, step=40, key=PARAM_KEYS["target_width"])
 
         color_space = st.selectbox(
             "Color space",
             ["LAB", "YCrCb", "HSV"],
-            index=["LAB", "YCrCb", "HSV"].index(cfg.color_space),
+            index=["LAB", "YCrCb", "HSV"].index(st.session_state[PARAM_KEYS["color_space"]]),
+            key=PARAM_KEYS["color_space"],
         )
-        enable_clahe = st.checkbox("Apply CLAHE (luminance)", value=cfg.enable_clahe_on_luminance)
+        enable_clahe = st.checkbox("Apply CLAHE (luminance)", key=PARAM_KEYS["enable_clahe"])
 
         st.markdown("### Floor ROI")
-        enable_floor_roi = st.checkbox("Enable floor ROI", value=cfg.enable_floor_roi)
-        floor_ratio = st.slider("Floor ROI ratio", 0.1, 0.9, float(cfg.floor_roi_ratio), step=0.05)
+        enable_floor_roi = st.checkbox("Enable floor ROI", key=PARAM_KEYS["enable_floor_roi"])
+        floor_ratio = st.slider("Floor ROI ratio", 0.1, 0.9, step=0.05, key=PARAM_KEYS["floor_ratio"])
 
         st.markdown("### Change detection")
-        enable_chroma_diff = st.checkbox("Chroma diff", value=cfg.enable_chroma_diff)
-        chroma_diff_thresh = st.slider("Chroma diff threshold", 0, 80, cfg.chroma_diff_thresh, step=1)
-        enable_edge_diff = st.checkbox("Edge diff", value=cfg.enable_edge_diff)
-        edge_diff_thresh = st.slider("Edge diff threshold", 0, 120, cfg.edge_diff_thresh, step=1)
-        enable_texture_diff = st.checkbox("Texture diff", value=cfg.enable_texture_diff)
-        texture_diff_thresh = st.slider("Texture diff threshold", 0, 80, cfg.texture_diff_thresh, step=1)
-        enable_shadow_mask = st.checkbox("Shadow mask", value=cfg.enable_shadow_mask)
-        shadow_luma_thresh = st.slider("Shadow luma threshold", 0, 80, cfg.shadow_luma_thresh, step=1)
+        enable_chroma_diff = st.checkbox("Chroma diff", key=PARAM_KEYS["enable_chroma_diff"])
+        chroma_diff_thresh = st.slider("Chroma diff threshold", 0, 80, step=1, key=PARAM_KEYS["chroma_diff_thresh"])
+        enable_edge_diff = st.checkbox("Edge diff", key=PARAM_KEYS["enable_edge_diff"])
+        edge_diff_thresh = st.slider("Edge diff threshold", 0, 120, step=1, key=PARAM_KEYS["edge_diff_thresh"])
+        enable_texture_diff = st.checkbox("Texture diff", key=PARAM_KEYS["enable_texture_diff"])
+        texture_diff_thresh = st.slider("Texture diff threshold", 0, 80, step=1, key=PARAM_KEYS["texture_diff_thresh"])
+        enable_shadow_mask = st.checkbox("Shadow mask", key=PARAM_KEYS["enable_shadow_mask"])
+        shadow_luma_thresh = st.slider("Shadow luma threshold", 0, 80, step=1, key=PARAM_KEYS["shadow_luma_thresh"])
         shadow_chroma_small_thresh = st.slider(
             "Shadow chroma small threshold",
             0,
             40,
-            cfg.shadow_chroma_small_thresh,
-            step=1
+            step=1,
+            key=PARAM_KEYS["shadow_chroma_small_thresh"],
         )
-        combine_mode = st.selectbox("Combine mode", ["OR", "AND"], index=0 if cfg.combine_mode == "OR" else 1)
+        combine_mode = st.selectbox(
+            "Combine mode",
+            ["OR", "AND"],
+            index=0 if st.session_state[PARAM_KEYS["combine_mode"]] == "OR" else 1,
+            key=PARAM_KEYS["combine_mode"],
+        )
 
         st.markdown("### Morphology")
-        enable_morphology = st.checkbox("Enable morphology", value=cfg.enable_morphology)
-        morph_close_ksize = st.slider("Close kernel size", 1, 25, cfg.morph_close_ksize, step=2)
-        morph_open_ksize = st.slider("Open kernel size", 1, 25, cfg.morph_open_ksize, step=2)
-        morph_iterations = st.slider("Morph iterations", 1, 4, cfg.morph_iterations, step=1)
+        enable_morphology = st.checkbox("Enable morphology", key=PARAM_KEYS["enable_morphology"])
+        morph_close_ksize = st.slider("Close kernel size", 1, 25, step=2, key=PARAM_KEYS["morph_close_ksize"])
+        morph_open_ksize = st.slider("Open kernel size", 1, 25, step=2, key=PARAM_KEYS["morph_open_ksize"])
+        morph_iterations = st.slider("Morph iterations", 1, 4, step=1, key=PARAM_KEYS["morph_iterations"])
 
         st.markdown("### Filtering")
-        enable_area_filter = st.checkbox("Enable area filter", value=cfg.enable_area_filter)
-        min_area = st.slider("Min area", 0, 2000, cfg.min_area, step=50)
-        max_area = st.slider("Max area", 1000, 300000, cfg.max_area, step=1000)
+        enable_area_filter = st.checkbox("Enable area filter", key=PARAM_KEYS["enable_area_filter"])
+        min_area = st.slider("Min area", 0, 2000, step=50, key=PARAM_KEYS["min_area"])
+        max_area = st.slider("Max area", 1000, 300000, step=1000, key=PARAM_KEYS["max_area"])
 
-        enable_bbox_filters = st.checkbox("Enable bbox filters", value=cfg.enable_bbox_filters)
-        min_aspect_ratio = st.slider("Min aspect ratio", 0.05, 1.5, float(cfg.min_aspect_ratio), step=0.05)
-        max_aspect_ratio = st.slider("Max aspect ratio", 1.5, 10.0, float(cfg.max_aspect_ratio), step=0.1)
-        must_be_in_floor_roi = st.checkbox("BBox center must be in floor ROI", value=cfg.must_be_in_floor_roi)
+        enable_bbox_filters = st.checkbox("Enable bbox filters", key=PARAM_KEYS["enable_bbox_filters"])
+        min_aspect_ratio = st.slider("Min aspect ratio", 0.05, 1.5, step=0.05, key=PARAM_KEYS["min_aspect_ratio"])
+        max_aspect_ratio = st.slider("Max aspect ratio", 1.5, 10.0, step=0.1, key=PARAM_KEYS["max_aspect_ratio"])
+        must_be_in_floor_roi = st.checkbox("BBox center must be in floor ROI", key=PARAM_KEYS["must_be_in_floor_roi"])
 
         st.markdown("### Display")
-        debug_scale = st.slider("Display scale", 0.3, 1.0, float(cfg.debug_scale), step=0.05)
+        debug_scale = st.slider("Display scale", 0.3, 1.0, step=0.05, key=PARAM_KEYS["debug_scale"])
 
         submitted = st.form_submit_button("Apply settings")
 
@@ -194,6 +272,8 @@ def main() -> None:
 
     if st.sidebar.button("Reset settings"):
         st.session_state.pop("cfg", None)
+        for key in PARAM_KEYS.values():
+            st.session_state.pop(key, None)
         st.session_state["cfg_version"] += 1
 
     cfg = build_config()
@@ -247,20 +327,36 @@ def main() -> None:
     items = [
         ("Reference", outputs["ref_bgr"]),
         ("Current", outputs["cur_bgr"]),
-        ("Mask - Chroma", outputs["mask_chroma"]),
-        ("Mask - Edge", outputs["mask_edge"]),
-        ("Mask - Texture", outputs["mask_texture"]),
-        ("Mask - Shadow", outputs["mask_shadow"]),
-        ("Floor ROI", outputs["floor_mask"]),
-        ("Mask - Combined", outputs["mask_combined"]),
-        ("Mask - Cleaned", outputs["mask_cleaned"]),
-        ("Result", outputs["result"]),
     ]
+
+    if cfg.enable_chroma_diff:
+        items.append(("Mask - Chroma", outputs["mask_chroma"]))
+    if cfg.enable_edge_diff:
+        items.append(("Mask - Edge", outputs["mask_edge"]))
+    if cfg.enable_texture_diff:
+        items.append(("Mask - Texture", outputs["mask_texture"]))
+    if cfg.enable_shadow_mask:
+        items.append(("Mask - Shadow", outputs["mask_shadow"]))
+    if cfg.enable_floor_roi:
+        items.append(("Floor ROI", outputs["floor_mask"]))
+
+    any_change_mask = (
+        cfg.enable_chroma_diff
+        or cfg.enable_edge_diff
+        or cfg.enable_texture_diff
+        or cfg.enable_shadow_mask
+    )
+    if any_change_mask:
+        items.append(("Mask - Combined", outputs["mask_combined"]))
+        if cfg.enable_morphology:
+            items.append(("Mask - Cleaned", outputs["mask_cleaned"]))
+
+    items.append(("Result", outputs["result"]))
 
     for row in range(0, len(items), 3):
         cols = st.columns(3)
         for col, (name, img) in zip(cols, items[row:row + 3]):
-            col.image(to_display(img), caption=name, use_container_width=True)
+            col.image(to_display(img), caption=name, width="stretch")
 
 
 if __name__ == "__main__":
