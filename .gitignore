@@ -3,3 +3,4 @@ __pycache__/
 TP1.txt
 state.txt
 *.pdf
+experiments/
