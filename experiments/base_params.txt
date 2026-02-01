@@ -1,0 +1,78 @@
+@dataclass
+class PipelineConfig:
+    # --- Input / resize ---
+    enable_resize: bool = True
+    target_width: int = 960  # keep aspect ratio
+
+    # --- Color space / normalization ---
+    color_space: str = "LAB"  # "LAB" or "YCrCb" or "HSV"
+    enable_clahe_on_luminance: bool = True  # helps with lighting variations
+
+    # --- Floor ROI ---
+    # Quick heuristic: floor is the bottom portion of the image.
+    # You can later replace by a polygon mask or an auto segmentation.
+    enable_floor_roi: bool = True
+    floor_roi_ratio: float = 0.45  # bottom 45% of the image
+    floor_seed_ratio: float = 0.25  # bottom band for multicluster seed
+    floor_seed_x_ratio: float = 1.0  # fraction of width used for seed (centered)
+    floor_seed_luma_clip_low: float = 0.05  # remove darkest seed pixels (quantile)
+    floor_seed_luma_clip_high: float = 0.95  # remove brightest seed pixels (quantile)
+    floor_k: int = 3  # number of clusters in seed band
+    floor_seed_quantile: float = 0.9  # distance quantile for threshold
+    floor_expand_enabled: bool = True  # expand mask locally with relaxed threshold
+    floor_expand_quantile: float = 0.97  # relaxed threshold (quantile)
+    floor_expand_ksize: int = 11  # dilation kernel for expansion area
+    floor_l_norm: str = "none"  # "none", "global", "seed"
+    floor_texture_window: int = 9
+    floor_texture_blur: int = 5
+    floor_w_l: float = 0.3
+    floor_w_ab: float = 1.0
+    floor_w_tex: float = 0.8
+    floor_clean_close_ksize: int = 7
+    floor_clean_open_ksize: int = 5
+    floor_keep_bottom_connected: bool = True
+    floor_min_seed_pixels: int = 500
+
+    # --- Change detection (diff) ---
+    enable_chroma_diff: bool = True
+    enable_edge_diff: bool = True
+    enable_texture_diff: bool = False
+    enable_shadow_mask: bool = False
+
+    # Thresholds (you will tune these)
+    chroma_diff_thresh: int = 25
+    edge_diff_thresh: int = 40
+    texture_diff_thresh: int = 20
+    shadow_luma_thresh: int = 25
+    shadow_chroma_small_thresh: int = 10
+
+    # Combine masks: OR is generally safer than AND
+    combine_mode: str = "OR"  # "OR" or "AND"
+
+    # --- Morphology cleanup ---
+    enable_morphology: bool = True
+    morph_close_ksize: int = 9
+    morph_open_ksize: int = 5
+    morph_iterations: int = 1
+
+    # --- Connected components / contours filtering ---
+    enable_area_filter: bool = True
+    min_area: int = 350
+    max_area: int = 200000
+
+    # Bounding box filtering (optional heuristics)
+    enable_bbox_filters: bool = True
+    min_aspect_ratio: float = 0.15  # width/height
+    max_aspect_ratio: float = 6.0
+    must_be_in_floor_roi: bool = True  # bbox center must be in floor ROI
+    merge_close_boxes: bool = True
+    merge_distance: int = 12
+
+    # --- Debug ---
+    show_debug_windows: bool = True
+    debug_scale: float = 1.0  # 0.5 for smaller windows
+    debug_mode: str = "grid"  # "grid" or "windows"
+    debug_grid_cols: int = 3
+    debug_grid_pad: int = 8
+    debug_window_name: str = "Pipeline Debug"
+    debug_label_font_scale: float = 0.5

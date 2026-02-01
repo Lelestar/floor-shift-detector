@@ -35,29 +35,37 @@ class PipelineConfig:
     # You can later replace by a polygon mask or an auto segmentation.
     enable_floor_roi: bool = True
     floor_roi_ratio: float = 0.45  # bottom 45% of the image
-    floor_seed_ratio: float = 0.25  # bottom band for multicluster seed
+    floor_seed_ratio: float = 0.2  # bottom band for multicluster seed
+    floor_seed_x_ratio: float = 0.65 # fraction of width used for seed (centered)
+    floor_seed_luma_clip_low: float = 0.01  # remove darkest seed pixels (quantile)
+    floor_seed_luma_clip_high: float = 0.94  # remove brightest seed pixels (quantile)
     floor_k: int = 3  # number of clusters in seed band
-    floor_seed_quantile: float = 0.9  # distance quantile for threshold
-    floor_texture_window: int = 9
-    floor_texture_blur: int = 5
-    floor_w_l: float = 0.3
+    floor_expand_enabled: bool = True  # expand mask locally with relaxed threshold
+    floor_expand_quantile: float = 0.96  # relaxed threshold (quantile)
+    floor_expand_ksize: int = 13  # dilation kernel for expansion area
+    floor_l_norm: str = "none"  # "none", "global", "seed"
+    floor_seed_quantile: float = 0.97  #  distance quantile for threshold
+    floor_mask_override_path: Optional[str] = None  # use a fixed mask instead of detection
+    floor_texture_window: int = 13
+    floor_texture_blur: int = 3
+    floor_w_l: float = 0.8
     floor_w_ab: float = 1.0
-    floor_w_tex: float = 0.8
-    floor_clean_close_ksize: int = 7
-    floor_clean_open_ksize: int = 5
+    floor_w_tex: float = 0.5
+    floor_clean_close_ksize: int = 11
+    floor_clean_open_ksize: int = 15
     floor_keep_bottom_connected: bool = True
     floor_min_seed_pixels: int = 500
 
     # --- Change detection (diff) ---
     enable_chroma_diff: bool = True
     enable_edge_diff: bool = True
-    enable_texture_diff: bool = False
-    enable_shadow_mask: bool = False
+    enable_texture_diff: bool = True
+    enable_shadow_mask: bool = True
 
     # Thresholds (you will tune these)
     chroma_diff_thresh: int = 25
-    edge_diff_thresh: int = 40
-    texture_diff_thresh: int = 20
+    edge_diff_thresh: int = 50
+    texture_diff_thresh: int = 30
     shadow_luma_thresh: int = 25
     shadow_chroma_small_thresh: int = 10
 
@@ -72,7 +80,7 @@ class PipelineConfig:
 
     # --- Connected components / contours filtering ---
     enable_area_filter: bool = True
-    min_area: int = 350
+    min_area: int = 400
     max_area: int = 200000
 
     # Bounding box filtering (optional heuristics)
@@ -80,6 +88,8 @@ class PipelineConfig:
     min_aspect_ratio: float = 0.15  # width/height
     max_aspect_ratio: float = 6.0
     must_be_in_floor_roi: bool = True  # bbox center must be in floor ROI
+    merge_close_boxes: bool = True
+    merge_distance: int = 11
 
     # --- Debug ---
     show_debug_windows: bool = True
@@ -207,9 +217,18 @@ def build_multicluster_features(
     w_l: float,
     w_ab: float,
     w_tex: float,
+    l_norm: str,
+    l_stats: Tuple[float, float] | None,
 ) -> np.ndarray:
     lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
-    lab[:, :, 0] /= 255.0
+    l = lab[:, :, 0] / 255.0
+    if l_norm != "none":
+        if l_stats is None:
+            raise ValueError("L stats required for L normalization")
+        mean, std = l_stats
+        if std > 1e-6:
+            l = (l - mean) / std
+    lab[:, :, 0] = np.clip(l, -3.0, 3.0)
     lab[:, :, 1] = (lab[:, :, 1] - 128.0) / 128.0
     lab[:, :, 2] = (lab[:, :, 2] - 128.0) / 128.0
 
@@ -242,10 +261,27 @@ def floor_mask_multicluster(
 ) -> np.ndarray:
     h, w = ref_bgr.shape[:2]
     seed_h = max(1, int(h * cfg.floor_seed_ratio))
+    seed_w = max(1, int(w * np.clip(cfg.floor_seed_x_ratio, 0.1, 1.0)))
+    x0 = max(0, (w - seed_w) // 2)
+    x1 = min(w, x0 + seed_w)
     seed_mask = np.zeros((h, w), dtype=np.uint8)
-    seed_mask[h - seed_h:h, :] = 255
+    seed_mask[h - seed_h:h, x0:x1] = 255
 
-    if np.count_nonzero(seed_mask) < cfg.floor_min_seed_pixels:
+    seed_luma_mask = seed_mask.copy()
+    low_q = float(np.clip(cfg.floor_seed_luma_clip_low, 0.0, 0.49))
+    high_q = float(np.clip(cfg.floor_seed_luma_clip_high, 0.51, 1.0))
+    if low_q > 0.0 or high_q < 1.0:
+        l = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2LAB)[:, :, 0].astype(np.float32)
+        seed_vals = l[seed_mask > 0]
+        if seed_vals.size > 0:
+            low_t = np.quantile(seed_vals, low_q) if low_q > 0.0 else None
+            high_t = np.quantile(seed_vals, high_q) if high_q < 1.0 else None
+            if low_t is not None:
+                seed_luma_mask[l < low_t] = 0
+            if high_t is not None:
+                seed_luma_mask[l > high_t] = 0
+
+    if np.count_nonzero(seed_luma_mask) < cfg.floor_min_seed_pixels:
         return build_floor_roi_mask((h, w), cfg.floor_roi_ratio)
 
     window_ksize = ensure_odd(int(cfg.floor_texture_window))
@@ -257,16 +293,32 @@ def floor_mask_multicluster(
         window_ksize=window_ksize,
         blur_ksize=blur_ksize
     )
+    l_norm = cfg.floor_l_norm.lower()
+    if l_norm not in {"none", "global", "seed"}:
+        raise ValueError(f"Unsupported floor_l_norm: {cfg.floor_l_norm}")
+
+    l_stats = None
+    if l_norm in {"global", "seed"}:
+        l = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2LAB)[:, :, 0].astype(np.float32) / 255.0
+        if l_norm == "global":
+            l_vals = l.reshape(-1)
+        else:
+            l_vals = l[seed_luma_mask > 0]
+        if l_vals.size > 0:
+            l_stats = (float(l_vals.mean()), float(l_vals.std() + 1e-6))
+
     feat = build_multicluster_features(
         ref_bgr,
         texture,
         w_l=cfg.floor_w_l,
         w_ab=cfg.floor_w_ab,
-        w_tex=cfg.floor_w_tex
+        w_tex=cfg.floor_w_tex,
+        l_norm=l_norm,
+        l_stats=l_stats
     )
-    feat_norm, _, _ = normalize_features(feat, seed_mask)
+    feat_norm, _, _ = normalize_features(feat, seed_luma_mask)
 
-    seed_samples = feat_norm[seed_mask > 0].reshape(-1, feat.shape[2])
+    seed_samples = feat_norm[seed_luma_mask > 0].reshape(-1, feat.shape[2])
     if seed_samples.shape[0] < cfg.floor_min_seed_pixels:
         return build_floor_roi_mask((h, w), cfg.floor_roi_ratio)
 
@@ -278,10 +330,20 @@ def floor_mask_multicluster(
     dists = np.linalg.norm(diff, axis=2)
     min_dist = dists.min(axis=1)
 
-    seed_dists = min_dist[seed_mask.reshape(-1) > 0]
+    seed_dists = min_dist[seed_luma_mask.reshape(-1) > 0]
     quant = float(np.clip(cfg.floor_seed_quantile, 0.5, 0.99))
     threshold = float(np.quantile(seed_dists, quant))
     candidate = (min_dist <= threshold).astype(np.uint8).reshape(h, w) * 255
+
+    if cfg.floor_expand_enabled:
+        expand_quant = float(np.clip(cfg.floor_expand_quantile, quant, 0.995))
+        expand_threshold = float(np.quantile(seed_dists, expand_quant))
+        expand_ksize = ensure_odd(int(cfg.floor_expand_ksize))
+        if expand_ksize > 1:
+            k_expand = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (expand_ksize, expand_ksize))
+            expand_area = cv2.dilate(candidate, k_expand, iterations=1)
+            relaxed = (min_dist <= expand_threshold).astype(np.uint8).reshape(h, w) * 255
+            candidate = cv2.bitwise_and(relaxed, expand_area)
 
     if cfg.floor_clean_close_ksize > 0 or cfg.floor_clean_open_ksize > 0:
         candidate = apply_morphology(
@@ -490,6 +552,42 @@ def filter_boxes(
     return filtered
 
 
+def merge_boxes(boxes: List[Tuple[int, int, int, int]], max_gap: int) -> List[Tuple[int, int, int, int]]:
+    if not boxes:
+        return boxes
+
+    merged = boxes[:]
+    changed = True
+    while changed:
+        changed = False
+        out: List[Tuple[int, int, int, int]] = []
+        used = [False] * len(merged)
+        for i in range(len(merged)):
+            if used[i]:
+                continue
+            x, y, w, h = merged[i]
+            x1, y1, x2, y2 = x, y, x + w, y + h
+            used[i] = True
+            for j in range(i + 1, len(merged)):
+                if used[j]:
+                    continue
+                xj, yj, wj, hj = merged[j]
+                xj1, yj1, xj2, yj2 = xj, yj, xj + wj, yj + hj
+                # Check gap between boxes
+                gap_x = max(0, max(x1 - xj2, xj1 - x2))
+                gap_y = max(0, max(y1 - yj2, yj1 - y2))
+                if gap_x <= max_gap and gap_y <= max_gap:
+                    x1 = min(x1, xj1)
+                    y1 = min(y1, yj1)
+                    x2 = max(x2, xj2)
+                    y2 = max(y2, yj2)
+                    used[j] = True
+                    changed = True
+            out.append((x1, y1, x2 - x1, y2 - y1))
+        merged = out
+    return merged
+
+
 def draw_boxes(image: np.ndarray, boxes: List[Tuple[int, int, int, int]]) -> np.ndarray:
     out = image.copy()
     for (x, y, w, h) in boxes:
@@ -591,7 +689,19 @@ def run_pipeline_images(ref_bgr: np.ndarray, cur_bgr: np.ndarray, cfg: PipelineC
     # --- Floor ROI mask ---
     floor_mask = None
     if cfg.enable_floor_roi:
-        floor_mask = floor_mask_multicluster(ref_bgr, cfg)
+        if cfg.floor_mask_override_path:
+            override = cv2.imread(cfg.floor_mask_override_path, cv2.IMREAD_GRAYSCALE)
+            if override is None:
+                raise FileNotFoundError(f"Could not read floor mask: {cfg.floor_mask_override_path}")
+            if override.shape[:2] != ref_bgr.shape[:2]:
+                override = cv2.resize(
+                    override,
+                    (ref_bgr.shape[1], ref_bgr.shape[0]),
+                    interpolation=cv2.INTER_NEAREST
+                )
+            floor_mask = (override > 127).astype(np.uint8) * 255
+        else:
+            floor_mask = floor_mask_multicluster(ref_bgr, cfg)
 
     # --- Change detection masks ---
     m_chroma = None
@@ -654,6 +764,8 @@ def run_pipeline_images(ref_bgr: np.ndarray, cur_bgr: np.ndarray, cfg: PipelineC
         floor_roi_mask=floor_mask,
         cfg=cfg
     )
+    if cfg.merge_close_boxes:
+        boxes = merge_boxes(boxes, cfg.merge_distance)
 
     # --- Draw results ---
     result = draw_boxes(cur_bgr, boxes)

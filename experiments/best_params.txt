@@ -1,0 +1,20 @@
+best_score_mean_iou: 0.6286
+Bedroom_iou: 0.6627
+Kitchen_iou: 0.3526
+LivingRoom_iou: 0.8705
+
+floor_expand_enabled: True
+floor_expand_ksize: 11
+floor_expand_quantile: 0.9532283595641504
+floor_k: 4
+floor_l_norm: none
+floor_seed_luma_clip_high: 0.9134381387519116
+floor_seed_luma_clip_low: 0.05022368102710887
+floor_seed_quantile: 0.8740660660747309
+floor_seed_ratio: 0.3774332878142139
+floor_seed_x_ratio: 0.922374014245821
+floor_texture_blur: 6
+floor_texture_window: 19
+floor_w_ab: 0.7492109147694923
+floor_w_l: 0.4956223100677336
+floor_w_tex: 1.0917010004972636

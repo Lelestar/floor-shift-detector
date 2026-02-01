@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Mask Creator</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>
+      body { font-family: Arial, sans-serif; margin: 16px; color: #111; }
+      .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+      .panel { margin-bottom: 12px; }
+      canvas { border: 1px solid #999; cursor: crosshair; max-width: 100%; height: auto; }
+      .hint { color: #444; font-size: 14px; }
+      button { padding: 6px 12px; }
+      input[type="range"] { width: 200px; }
+      .label { font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <h2>Mask Creator (no dependencies)</h2>
+    <div class="panel row">
+      <div class="label">Image:</div>
+      <input type="file" id="fileInput" accept="image/*">
+      <div class="label">Brush:</div>
+      <input type="range" id="brushSize" min="1" max="100" value="20">
+      <span id="brushLabel">20</span>
+      <label><input type="radio" name="mode" value="paint" checked> Paint</label>
+      <label><input type="radio" name="mode" value="erase"> Erase</label>
+      <button id="clearBtn">Clear</button>
+      <button id="saveBtn">Save mask</button>
+    </div>
+    <div class="panel hint">
+      Peins en blanc le sol (mask), noir = non‑sol. Le masque est exporté en PNG.
+    </div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+      const fileInput = document.getElementById("fileInput");
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+      const brushSize = document.getElementById("brushSize");
+      const brushLabel = document.getElementById("brushLabel");
+      const clearBtn = document.getElementById("clearBtn");
+      const saveBtn = document.getElementById("saveBtn");
+
+      let img = new Image();
+      let originalW = 0;
+      let originalH = 0;
+      let mask = null; // offscreen mask canvas
+      let scale = 1.0;
+      let drawing = false;
+
+      function setCanvasSize(w, h) {
+        canvas.width = w;
+        canvas.height = h;
+        mask = document.createElement("canvas");
+        mask.width = w;
+        mask.height = h;
+        const mctx = mask.getContext("2d");
+        mctx.fillStyle = "black";
+        mctx.fillRect(0, 0, w, h);
+      }
+
+      function redraw() {
+        if (!img.src) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+        ctx.save();
+        ctx.globalAlpha = 0.35;
+        ctx.drawImage(mask, 0, 0);
+        ctx.restore();
+      }
+
+      fileInput.addEventListener("change", (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const url = URL.createObjectURL(file);
+        img = new Image();
+        img.onload = () => {
+          originalW = img.width;
+          originalH = img.height;
+          const maxW = Math.min(window.innerWidth - 40, 1200);
+          scale = 1.0;
+          let w = img.width;
+          let h = img.height;
+          if (w > maxW) {
+            scale = maxW / w;
+            w = Math.round(w * scale);
+            h = Math.round(h * scale);
+          }
+          const resized = document.createElement("canvas");
+          resized.width = w;
+          resized.height = h;
+          const rctx = resized.getContext("2d");
+          rctx.drawImage(img, 0, 0, w, h);
+          img = new Image();
+          img.onload = () => {
+            setCanvasSize(w, h);
+            redraw();
+          };
+          img.src = resized.toDataURL("image/png");
+          redraw();
+          URL.revokeObjectURL(url);
+        };
+        img.src = url;
+      });
+
+      brushSize.addEventListener("input", () => {
+        brushLabel.textContent = brushSize.value;
+      });
+
+      function currentMode() {
+        return document.querySelector('input[name="mode"]:checked').value;
+      }
+
+      function paint(x, y) {
+        const size = parseInt(brushSize.value, 10);
+        const mctx = mask.getContext("2d");
+        mctx.beginPath();
+        mctx.lineCap = "round";
+        mctx.lineJoin = "round";
+        mctx.lineWidth = size * 2;
+        mctx.strokeStyle = (currentMode() === "paint") ? "white" : "black";
+        mctx.moveTo(lastPos.x, lastPos.y);
+        mctx.lineTo(x, y);
+        mctx.stroke();
+        lastPos = { x, y };
+        redraw();
+      }
+
+      function getPos(evt) {
+        const rect = canvas.getBoundingClientRect();
+        return {
+          x: Math.round((evt.clientX - rect.left)),
+          y: Math.round((evt.clientY - rect.top))
+        };
+      }
+
+      let lastPos = { x: 0, y: 0 };
+
+      canvas.addEventListener("mousedown", (evt) => {
+        if (!mask) return;
+        drawing = true;
+        const p = getPos(evt);
+        lastPos = p;
+        paint(p.x, p.y);
+      });
+
+      canvas.addEventListener("mousemove", (evt) => {
+        if (!drawing) return;
+        const p = getPos(evt);
+        paint(p.x, p.y);
+      });
+
+      canvas.addEventListener("mouseup", () => { drawing = false; });
+      canvas.addEventListener("mouseleave", () => { drawing = false; });
+
+      clearBtn.addEventListener("click", () => {
+        if (!mask) return;
+        const mctx = mask.getContext("2d");
+        mctx.fillStyle = "black";
+        mctx.fillRect(0, 0, mask.width, mask.height);
+        redraw();
+      });
+
+      saveBtn.addEventListener("click", () => {
+        if (!mask) return;
+        let output = mask;
+        if (scale !== 1.0 && originalW && originalH) {
+          const up = document.createElement("canvas");
+          up.width = originalW;
+          up.height = originalH;
+          const uctx = up.getContext("2d");
+          uctx.imageSmoothingEnabled = false;
+          uctx.drawImage(mask, 0, 0, originalW, originalH);
+          output = up;
+        }
+        const link = document.createElement("a");
+        link.download = "mask.png";
+        link.href = output.toDataURL("image/png");
+        link.click();
+      });
+    </script>
+  </body>
+</html>

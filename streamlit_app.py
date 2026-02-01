@@ -23,13 +23,22 @@ PARAM_KEYS = {
     "enable_clahe": "params_enable_clahe",
     "enable_floor_roi": "params_enable_floor_roi",
     "floor_seed_ratio": "params_floor_seed_ratio",
+    "floor_seed_x_ratio": "params_floor_seed_x_ratio",
+    "floor_seed_luma_clip_low": "params_floor_seed_luma_clip_low",
+    "floor_seed_luma_clip_high": "params_floor_seed_luma_clip_high",
     "floor_k": "params_floor_k",
     "floor_seed_quantile": "params_floor_seed_quantile",
+    "floor_expand_enabled": "params_floor_expand_enabled",
+    "floor_expand_quantile": "params_floor_expand_quantile",
+    "floor_expand_ksize": "params_floor_expand_ksize",
+    "floor_l_norm": "params_floor_l_norm",
     "floor_texture_window": "params_floor_texture_window",
     "floor_texture_blur": "params_floor_texture_blur",
     "floor_w_l": "params_floor_w_l",
     "floor_w_ab": "params_floor_w_ab",
     "floor_w_tex": "params_floor_w_tex",
+    "floor_mask_override": "params_floor_mask_override",
+    "floor_mask_override_path": "params_floor_mask_override_path",
     "floor_clean_close_ksize": "params_floor_clean_close_ksize",
     "floor_clean_open_ksize": "params_floor_clean_open_ksize",
     "floor_keep_bottom_connected": "params_floor_keep_bottom_connected",
@@ -54,6 +63,8 @@ PARAM_KEYS = {
     "min_aspect_ratio": "params_min_aspect_ratio",
     "max_aspect_ratio": "params_max_aspect_ratio",
     "must_be_in_floor_roi": "params_must_be_in_floor_roi",
+    "merge_close_boxes": "params_merge_close_boxes",
+    "merge_distance": "params_merge_distance",
 }
 
 
@@ -122,13 +133,22 @@ def init_param_defaults(cfg: PipelineConfig) -> None:
         PARAM_KEYS["enable_clahe"]: cfg.enable_clahe_on_luminance,
         PARAM_KEYS["enable_floor_roi"]: cfg.enable_floor_roi,
         PARAM_KEYS["floor_seed_ratio"]: float(cfg.floor_seed_ratio),
+        PARAM_KEYS["floor_seed_x_ratio"]: float(cfg.floor_seed_x_ratio),
+        PARAM_KEYS["floor_seed_luma_clip_low"]: float(cfg.floor_seed_luma_clip_low),
+        PARAM_KEYS["floor_seed_luma_clip_high"]: float(cfg.floor_seed_luma_clip_high),
         PARAM_KEYS["floor_k"]: int(cfg.floor_k),
         PARAM_KEYS["floor_seed_quantile"]: float(cfg.floor_seed_quantile),
+        PARAM_KEYS["floor_expand_enabled"]: bool(cfg.floor_expand_enabled),
+        PARAM_KEYS["floor_expand_quantile"]: float(cfg.floor_expand_quantile),
+        PARAM_KEYS["floor_expand_ksize"]: int(cfg.floor_expand_ksize),
+        PARAM_KEYS["floor_l_norm"]: cfg.floor_l_norm,
         PARAM_KEYS["floor_texture_window"]: int(cfg.floor_texture_window),
         PARAM_KEYS["floor_texture_blur"]: int(cfg.floor_texture_blur),
         PARAM_KEYS["floor_w_l"]: float(cfg.floor_w_l),
         PARAM_KEYS["floor_w_ab"]: float(cfg.floor_w_ab),
         PARAM_KEYS["floor_w_tex"]: float(cfg.floor_w_tex),
+        PARAM_KEYS["floor_mask_override"]: bool(cfg.floor_mask_override_path),
+        PARAM_KEYS["floor_mask_override_path"]: cfg.floor_mask_override_path or "",
         PARAM_KEYS["floor_clean_close_ksize"]: cfg.floor_clean_close_ksize,
         PARAM_KEYS["floor_clean_open_ksize"]: cfg.floor_clean_open_ksize,
         PARAM_KEYS["floor_keep_bottom_connected"]: cfg.floor_keep_bottom_connected,
@@ -153,6 +173,8 @@ def init_param_defaults(cfg: PipelineConfig) -> None:
         PARAM_KEYS["min_aspect_ratio"]: float(cfg.min_aspect_ratio),
         PARAM_KEYS["max_aspect_ratio"]: float(cfg.max_aspect_ratio),
         PARAM_KEYS["must_be_in_floor_roi"]: cfg.must_be_in_floor_roi,
+        PARAM_KEYS["merge_close_boxes"]: cfg.merge_close_boxes,
+        PARAM_KEYS["merge_distance"]: cfg.merge_distance,
     }
 
     for key, value in defaults.items():
@@ -174,16 +196,26 @@ def build_config() -> PipelineConfig:
             "shadow_luma_thresh",
             "shadow_chroma_small_thresh",
             "floor_seed_ratio",
+            "floor_seed_x_ratio",
+            "floor_seed_luma_clip_low",
+            "floor_seed_luma_clip_high",
             "floor_k",
             "floor_seed_quantile",
+            "floor_expand_enabled",
+            "floor_expand_quantile",
+            "floor_expand_ksize",
+            "floor_l_norm",
             "floor_texture_window",
             "floor_texture_blur",
             "floor_w_l",
             "floor_w_ab",
             "floor_w_tex",
+            "floor_mask_override_path",
             "floor_clean_close_ksize",
             "floor_clean_open_ksize",
             "floor_keep_bottom_connected",
+            "merge_close_boxes",
+            "merge_distance",
         ]
         if any(not hasattr(cfg, name) for name in missing):
             cfg = PipelineConfig(show_debug_windows=False)
@@ -237,6 +269,30 @@ def build_config() -> PipelineConfig:
                 key=PARAM_KEYS["floor_seed_ratio"],
                 help="Bottom band used to learn floor appearance.",
             )
+            floor_seed_x_ratio = st.slider(
+                "Floor seed width ratio",
+                0.3,
+                1.0,
+                step=0.05,
+                key=PARAM_KEYS["floor_seed_x_ratio"],
+                help="Fraction of image width used for the seed (centered).",
+            )
+            floor_seed_luma_clip_low = st.slider(
+                "Seed luma clip low (quantile)",
+                0.0,
+                0.3,
+                step=0.01,
+                key=PARAM_KEYS["floor_seed_luma_clip_low"],
+                help="Discard the darkest seed pixels (0 = keep all).",
+            )
+            floor_seed_luma_clip_high = st.slider(
+                "Seed luma clip high (quantile)",
+                0.7,
+                1.0,
+                step=0.01,
+                key=PARAM_KEYS["floor_seed_luma_clip_high"],
+                help="Discard the brightest seed pixels (1 = keep all).",
+            )
             floor_k = st.slider(
                 "Number of clusters (K)",
                 1,
@@ -252,6 +308,54 @@ def build_config() -> PipelineConfig:
                 step=0.01,
                 key=PARAM_KEYS["floor_seed_quantile"],
                 help="Threshold: higher keeps more pixels as floor.",
+            )
+            floor_mask_override = st.checkbox(
+                "Use floor mask override",
+                key=PARAM_KEYS["floor_mask_override"],
+                help="Use a fixed mask file instead of automatic floor detection.",
+            )
+            mask_paths = collect_image_paths(Path("masks"))
+            if mask_paths:
+                floor_mask_override_path = st.selectbox(
+                    "Floor mask path",
+                    mask_paths,
+                    index=0,
+                    key=PARAM_KEYS["floor_mask_override_path"],
+                    help="Binary mask (white=floor) from masks/ folder.",
+                )
+            else:
+                floor_mask_override_path = st.text_input(
+                    "Floor mask path",
+                    key=PARAM_KEYS["floor_mask_override_path"],
+                    help="Path to a binary mask (white=floor).",
+                )
+            floor_l_norm = st.selectbox(
+                "L normalization",
+                ["none", "global", "seed"],
+                index=["none", "global", "seed"].index(st.session_state[PARAM_KEYS["floor_l_norm"]]),
+                key=PARAM_KEYS["floor_l_norm"],
+                help="Normalize L to reduce lighting differences.",
+            )
+            floor_expand_enabled = st.checkbox(
+                "Local expansion",
+                key=PARAM_KEYS["floor_expand_enabled"],
+                help="Expand the floor mask around confident regions.",
+            )
+            floor_expand_quantile = st.slider(
+                "Expansion quantile",
+                0.9,
+                0.995,
+                step=0.005,
+                key=PARAM_KEYS["floor_expand_quantile"],
+                help="Relaxed threshold used during expansion.",
+            )
+            floor_expand_ksize = st.slider(
+                "Expansion kernel",
+                3,
+                31,
+                step=2,
+                key=PARAM_KEYS["floor_expand_ksize"],
+                help="Size of the dilation kernel for expansion area.",
             )
 
             with st.expander("Floor ROI advanced", expanded=False):
@@ -466,6 +570,19 @@ def build_config() -> PipelineConfig:
                 key=PARAM_KEYS["must_be_in_floor_roi"],
                 help="Reject boxes whose center is outside the floor mask.",
             )
+            merge_close_boxes = st.checkbox(
+                "Merge close boxes",
+                key=PARAM_KEYS["merge_close_boxes"],
+                help="Merge boxes that are separated by small gaps.",
+            )
+            merge_distance = st.slider(
+                "Merge distance",
+                0,
+                50,
+                step=1,
+                key=PARAM_KEYS["merge_distance"],
+                help="Max gap (pixels) to merge neighboring boxes.",
+            )
 
         apply_col, reset_col = st.columns(2)
         with apply_col:
@@ -490,13 +607,21 @@ def build_config() -> PipelineConfig:
             enable_floor_roi=enable_floor_roi,
             floor_roi_ratio=cfg.floor_roi_ratio,
             floor_seed_ratio=floor_seed_ratio,
+            floor_seed_x_ratio=floor_seed_x_ratio,
+            floor_seed_luma_clip_low=floor_seed_luma_clip_low,
+            floor_seed_luma_clip_high=floor_seed_luma_clip_high,
             floor_k=floor_k,
             floor_seed_quantile=floor_seed_quantile,
+            floor_l_norm=floor_l_norm,
+            floor_expand_enabled=floor_expand_enabled,
+            floor_expand_quantile=floor_expand_quantile,
+            floor_expand_ksize=ensure_odd(floor_expand_ksize),
             floor_texture_window=floor_texture_window,
             floor_texture_blur=floor_texture_blur,
             floor_w_l=floor_w_l,
             floor_w_ab=floor_w_ab,
             floor_w_tex=floor_w_tex,
+            floor_mask_override_path=floor_mask_override_path if floor_mask_override else None,
             floor_clean_close_ksize=ensure_odd(floor_clean_close_ksize),
             floor_clean_open_ksize=ensure_odd(floor_clean_open_ksize),
             floor_keep_bottom_connected=floor_keep_bottom_connected,
@@ -521,6 +646,8 @@ def build_config() -> PipelineConfig:
             min_aspect_ratio=min_aspect_ratio,
             max_aspect_ratio=max_aspect_ratio,
             must_be_in_floor_roi=must_be_in_floor_roi,
+            merge_close_boxes=merge_close_boxes,
+            merge_distance=merge_distance,
             show_debug_windows=False,
             debug_scale=cfg.debug_scale,
         )
