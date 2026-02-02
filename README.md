@@ -44,6 +44,7 @@ Dans **Floor ROI** :
 - **L normalization** : normalise la luminance (L) pour réduire l'effet d'éclairage (global ou seed).
 - **Local expansion** : étend le masque autour des zones “sûres” (utile pour parquet éclairé différemment).
 - **Use floor mask override** : permet d'utiliser un masque fixe (PNG) à la place de la détection automatique.
+ - **Local contrast diff** : utile pour détecter des objets clairs et lisses (ex: oreiller blanc).
 - **Number of clusters (K)** : 2–4 (3 par défaut).
 - **Seed distance quantile** : 0.85–0.95 (plus haut = masque plus large).
 - **Weight a,b / texture** : augmente `texture` si le tapis est mal inclus.

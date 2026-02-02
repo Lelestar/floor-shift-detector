@@ -48,6 +48,9 @@ PARAM_KEYS = {
     "edge_diff_thresh": "params_edge_diff_thresh",
     "enable_texture_diff": "params_enable_texture_diff",
     "texture_diff_thresh": "params_texture_diff_thresh",
+    "enable_local_contrast_diff": "params_enable_local_contrast_diff",
+    "local_contrast_diff_thresh": "params_local_contrast_diff_thresh",
+    "local_contrast_ksize": "params_local_contrast_ksize",
     "enable_shadow_mask": "params_enable_shadow_mask",
     "shadow_luma_thresh": "params_shadow_luma_thresh",
     "shadow_chroma_small_thresh": "params_shadow_chroma_small_thresh",
@@ -56,6 +59,9 @@ PARAM_KEYS = {
     "morph_close_ksize": "params_morph_close_ksize",
     "morph_open_ksize": "params_morph_open_ksize",
     "morph_iterations": "params_morph_iterations",
+    "enable_edge_fill": "params_enable_edge_fill",
+    "edge_thicken_ksize": "params_edge_thicken_ksize",
+    "edge_fill_close_ksize": "params_edge_fill_close_ksize",
     "enable_area_filter": "params_enable_area_filter",
     "min_area": "params_min_area",
     "max_area": "params_max_area",
@@ -65,6 +71,8 @@ PARAM_KEYS = {
     "must_be_in_floor_roi": "params_must_be_in_floor_roi",
     "merge_close_boxes": "params_merge_close_boxes",
     "merge_distance": "params_merge_distance",
+    "merge_mode": "params_merge_mode",
+    "merge_mask_ksize": "params_merge_mask_ksize",
 }
 
 
@@ -158,6 +166,9 @@ def init_param_defaults(cfg: PipelineConfig) -> None:
         PARAM_KEYS["edge_diff_thresh"]: cfg.edge_diff_thresh,
         PARAM_KEYS["enable_texture_diff"]: cfg.enable_texture_diff,
         PARAM_KEYS["texture_diff_thresh"]: cfg.texture_diff_thresh,
+        PARAM_KEYS["enable_local_contrast_diff"]: cfg.enable_local_contrast_diff,
+        PARAM_KEYS["local_contrast_diff_thresh"]: cfg.local_contrast_diff_thresh,
+        PARAM_KEYS["local_contrast_ksize"]: cfg.local_contrast_ksize,
         PARAM_KEYS["enable_shadow_mask"]: cfg.enable_shadow_mask,
         PARAM_KEYS["shadow_luma_thresh"]: cfg.shadow_luma_thresh,
         PARAM_KEYS["shadow_chroma_small_thresh"]: cfg.shadow_chroma_small_thresh,
@@ -166,6 +177,9 @@ def init_param_defaults(cfg: PipelineConfig) -> None:
         PARAM_KEYS["morph_close_ksize"]: cfg.morph_close_ksize,
         PARAM_KEYS["morph_open_ksize"]: cfg.morph_open_ksize,
         PARAM_KEYS["morph_iterations"]: cfg.morph_iterations,
+        PARAM_KEYS["enable_edge_fill"]: cfg.enable_edge_fill,
+        PARAM_KEYS["edge_thicken_ksize"]: cfg.edge_thicken_ksize,
+        PARAM_KEYS["edge_fill_close_ksize"]: cfg.edge_fill_close_ksize,
         PARAM_KEYS["enable_area_filter"]: cfg.enable_area_filter,
         PARAM_KEYS["min_area"]: cfg.min_area,
         PARAM_KEYS["max_area"]: cfg.max_area,
@@ -175,6 +189,8 @@ def init_param_defaults(cfg: PipelineConfig) -> None:
         PARAM_KEYS["must_be_in_floor_roi"]: cfg.must_be_in_floor_roi,
         PARAM_KEYS["merge_close_boxes"]: cfg.merge_close_boxes,
         PARAM_KEYS["merge_distance"]: cfg.merge_distance,
+        PARAM_KEYS["merge_mode"]: cfg.merge_mode,
+        PARAM_KEYS["merge_mask_ksize"]: cfg.merge_mask_ksize,
     }
 
     for key, value in defaults.items():
@@ -195,6 +211,9 @@ def build_config() -> PipelineConfig:
             "enable_shadow_mask",
             "shadow_luma_thresh",
             "shadow_chroma_small_thresh",
+            "enable_local_contrast_diff",
+            "local_contrast_diff_thresh",
+            "local_contrast_ksize",
             "floor_seed_ratio",
             "floor_seed_x_ratio",
             "floor_seed_luma_clip_low",
@@ -214,8 +233,13 @@ def build_config() -> PipelineConfig:
             "floor_clean_close_ksize",
             "floor_clean_open_ksize",
             "floor_keep_bottom_connected",
+            "enable_edge_fill",
+            "edge_thicken_ksize",
+            "edge_fill_close_ksize",
             "merge_close_boxes",
             "merge_distance",
+            "merge_mode",
+            "merge_mask_ksize",
         ]
         if any(not hasattr(cfg, name) for name in missing):
             cfg = PipelineConfig(show_debug_windows=False)
@@ -461,6 +485,27 @@ def build_config() -> PipelineConfig:
                 key=PARAM_KEYS["texture_diff_thresh"],
                 help="Higher = fewer detections.",
             )
+            enable_local_contrast_diff = st.checkbox(
+                "Local contrast diff",
+                key=PARAM_KEYS["enable_local_contrast_diff"],
+                help="Detect changes in local contrast (helps with smooth bright objects).",
+            )
+            local_contrast_diff_thresh = st.slider(
+                "Local contrast threshold",
+                0,
+                60,
+                step=1,
+                key=PARAM_KEYS["local_contrast_diff_thresh"],
+                help="Lower = more sensitive.",
+            )
+            local_contrast_ksize = st.slider(
+                "Local contrast kernel",
+                3,
+                31,
+                step=2,
+                key=PARAM_KEYS["local_contrast_ksize"],
+                help="Kernel size for local contrast.",
+            )
             enable_shadow_mask = st.checkbox(
                 "Shadow mask",
                 key=PARAM_KEYS["enable_shadow_mask"],
@@ -520,6 +565,27 @@ def build_config() -> PipelineConfig:
                 key=PARAM_KEYS["morph_iterations"],
                 help="Number of times to apply morphology.",
             )
+            enable_edge_fill = st.checkbox(
+                "Edge fill",
+                key=PARAM_KEYS["enable_edge_fill"],
+                help="Thicken contours and close gaps before cleaning.",
+            )
+            edge_thicken_ksize = st.slider(
+                "Edge thicken kernel",
+                1,
+                25,
+                step=2,
+                key=PARAM_KEYS["edge_thicken_ksize"],
+                help="Dilation size for thin contours.",
+            )
+            edge_fill_close_ksize = st.slider(
+                "Edge fill close kernel",
+                1,
+                25,
+                step=2,
+                key=PARAM_KEYS["edge_fill_close_ksize"],
+                help="Close to fill interiors after thickening.",
+            )
 
         with st.expander("Filtering", expanded=False):
             enable_area_filter = st.checkbox(
@@ -575,6 +641,13 @@ def build_config() -> PipelineConfig:
                 key=PARAM_KEYS["merge_close_boxes"],
                 help="Merge boxes that are separated by small gaps.",
             )
+            merge_mode = st.selectbox(
+                "Merge mode",
+                ["bbox", "mask"],
+                index=0 if st.session_state[PARAM_KEYS["merge_mode"]] == "bbox" else 1,
+                key=PARAM_KEYS["merge_mode"],
+                help="bbox = merge boxes by gap, mask = dilate mask then re-find boxes.",
+            )
             merge_distance = st.slider(
                 "Merge distance",
                 0,
@@ -582,6 +655,14 @@ def build_config() -> PipelineConfig:
                 step=1,
                 key=PARAM_KEYS["merge_distance"],
                 help="Max gap (pixels) to merge neighboring boxes.",
+            )
+            merge_mask_ksize = st.slider(
+                "Merge mask kernel",
+                3,
+                41,
+                step=2,
+                key=PARAM_KEYS["merge_mask_ksize"],
+                help="Dilation size used for mask-based merging.",
             )
 
         apply_col, reset_col = st.columns(2)
@@ -632,6 +713,9 @@ def build_config() -> PipelineConfig:
             enable_texture_diff=enable_texture_diff,
             enable_shadow_mask=enable_shadow_mask,
             texture_diff_thresh=texture_diff_thresh,
+            enable_local_contrast_diff=enable_local_contrast_diff,
+            local_contrast_diff_thresh=local_contrast_diff_thresh,
+            local_contrast_ksize=ensure_odd(local_contrast_ksize),
             shadow_luma_thresh=shadow_luma_thresh,
             shadow_chroma_small_thresh=shadow_chroma_small_thresh,
             combine_mode=combine_mode,
@@ -639,6 +723,9 @@ def build_config() -> PipelineConfig:
             morph_close_ksize=ensure_odd(morph_close_ksize),
             morph_open_ksize=ensure_odd(morph_open_ksize),
             morph_iterations=morph_iterations,
+            enable_edge_fill=enable_edge_fill,
+            edge_thicken_ksize=ensure_odd(edge_thicken_ksize),
+            edge_fill_close_ksize=ensure_odd(edge_fill_close_ksize),
             enable_area_filter=enable_area_filter,
             min_area=min_area,
             max_area=max_area,
@@ -647,7 +734,9 @@ def build_config() -> PipelineConfig:
             max_aspect_ratio=max_aspect_ratio,
             must_be_in_floor_roi=must_be_in_floor_roi,
             merge_close_boxes=merge_close_boxes,
+            merge_mode=merge_mode,
             merge_distance=merge_distance,
+            merge_mask_ksize=ensure_odd(merge_mask_ksize),
             show_debug_windows=False,
             debug_scale=cfg.debug_scale,
         )
@@ -720,6 +809,8 @@ def main() -> None:
         items.append(("Mask - Edge", outputs["mask_edge"]))
     if cfg.enable_texture_diff:
         items.append(("Mask - Texture", outputs["mask_texture"]))
+    if cfg.enable_local_contrast_diff:
+        items.append(("Mask - Local Contrast", outputs["mask_local_contrast"]))
     if cfg.enable_shadow_mask:
         items.append(("Mask - Shadow", outputs["mask_shadow"]))
     if cfg.enable_floor_roi:
@@ -729,6 +820,7 @@ def main() -> None:
         cfg.enable_chroma_diff
         or cfg.enable_edge_diff
         or cfg.enable_texture_diff
+        or cfg.enable_local_contrast_diff
         or cfg.enable_shadow_mask
     )
     if any_change_mask:

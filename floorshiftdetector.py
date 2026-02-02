@@ -60,23 +60,29 @@ class PipelineConfig:
     enable_chroma_diff: bool = True
     enable_edge_diff: bool = True
     enable_texture_diff: bool = True
-    enable_shadow_mask: bool = True
+    enable_local_contrast_diff: bool = False
+    enable_shadow_mask: bool = False
 
     # Thresholds (you will tune these)
     chroma_diff_thresh: int = 25
     edge_diff_thresh: int = 50
     texture_diff_thresh: int = 30
+    local_contrast_diff_thresh: int = 20
+    local_contrast_ksize: int = 9
     shadow_luma_thresh: int = 25
-    shadow_chroma_small_thresh: int = 10
+    shadow_chroma_small_thresh: int = 40
 
     # Combine masks: OR is generally safer than AND
     combine_mode: str = "OR"  # "OR" or "AND"
 
     # --- Morphology cleanup ---
     enable_morphology: bool = True
-    morph_close_ksize: int = 9
+    morph_close_ksize: int = 17
     morph_open_ksize: int = 5
     morph_iterations: int = 1
+    enable_edge_fill: bool = False
+    edge_thicken_ksize: int = 5
+    edge_fill_close_ksize: int = 11
 
     # --- Connected components / contours filtering ---
     enable_area_filter: bool = True
@@ -89,7 +95,9 @@ class PipelineConfig:
     max_aspect_ratio: float = 6.0
     must_be_in_floor_roi: bool = True  # bbox center must be in floor ROI
     merge_close_boxes: bool = True
+    merge_mode: str = "mask"  # "bbox" or "mask"
     merge_distance: int = 11
+    merge_mask_ksize: int = 11
 
     # --- Debug ---
     show_debug_windows: bool = True
@@ -477,6 +485,22 @@ def edge_diff_mask(ref_bgr: np.ndarray, cur_bgr: np.ndarray, thresh: int) -> np.
     return mask
 
 
+def local_contrast_diff_mask(ref_bgr: np.ndarray, cur_bgr: np.ndarray, thresh: int, ksize: int) -> np.ndarray:
+    if ksize <= 0:
+        ksize = 3
+    if ksize % 2 == 0:
+        ksize += 1
+    ref_gray = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
+    cur_gray = cv2.cvtColor(cur_bgr, cv2.COLOR_BGR2GRAY)
+    ref_blur = cv2.GaussianBlur(ref_gray, (ksize, ksize), 0)
+    cur_blur = cv2.GaussianBlur(cur_gray, (ksize, ksize), 0)
+    ref_lc = cv2.absdiff(ref_gray, ref_blur)
+    cur_lc = cv2.absdiff(cur_gray, cur_blur)
+    diff = cv2.absdiff(ref_lc, cur_lc)
+    _, mask = cv2.threshold(diff, thresh, 255, cv2.THRESH_BINARY)
+    return mask
+
+
 def combine_masks(mask_a: Optional[np.ndarray], mask_b: Optional[np.ndarray], mode: str) -> np.ndarray:
     if mask_a is None and mask_b is None:
         raise ValueError("At least one mask must be provided")
@@ -503,6 +527,17 @@ def apply_morphology(mask: np.ndarray, close_ksize: int, open_ksize: int, iterat
         k_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (open_ksize, open_ksize))
         out = cv2.morphologyEx(out, cv2.MORPH_OPEN, k_open, iterations=iterations)
 
+    return out
+
+
+def apply_edge_fill(mask: np.ndarray, thicken_ksize: int, close_ksize: int) -> np.ndarray:
+    out = mask.copy()
+    if thicken_ksize > 0:
+        k_thick = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (thicken_ksize, thicken_ksize))
+        out = cv2.dilate(out, k_thick, iterations=1)
+    if close_ksize > 0:
+        k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_ksize, close_ksize))
+        out = cv2.morphologyEx(out, cv2.MORPH_CLOSE, k_close, iterations=1)
     return out
 
 
@@ -586,6 +621,15 @@ def merge_boxes(boxes: List[Tuple[int, int, int, int]], max_gap: int) -> List[Tu
             out.append((x1, y1, x2 - x1, y2 - y1))
         merged = out
     return merged
+
+
+def dilate_mask(mask: np.ndarray, ksize: int) -> np.ndarray:
+    if ksize <= 1:
+        return mask
+    if ksize % 2 == 0:
+        ksize += 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize, ksize))
+    return cv2.dilate(mask, kernel, iterations=1)
 
 
 def draw_boxes(image: np.ndarray, boxes: List[Tuple[int, int, int, int]]) -> np.ndarray:
@@ -716,6 +760,15 @@ def run_pipeline_images(ref_bgr: np.ndarray, cur_bgr: np.ndarray, cfg: PipelineC
     if cfg.enable_texture_diff:
         m_texture = texture_diff_mask(ref_bgr, cur_bgr, cfg.texture_diff_thresh)
 
+    m_local_contrast = None
+    if cfg.enable_local_contrast_diff:
+        m_local_contrast = local_contrast_diff_mask(
+            ref_bgr,
+            cur_bgr,
+            cfg.local_contrast_diff_thresh,
+            cfg.local_contrast_ksize
+        )
+
     m_shadow = None
     if cfg.enable_shadow_mask:
         m_shadow = shadow_mask(
@@ -734,6 +787,9 @@ def run_pipeline_images(ref_bgr: np.ndarray, cur_bgr: np.ndarray, cfg: PipelineC
     if m_texture is not None:
         combined = m_texture if combined is None else combine_masks(combined, m_texture, "OR")
 
+    if m_local_contrast is not None:
+        combined = m_local_contrast if combined is None else combine_masks(combined, m_local_contrast, "OR")
+
     if combined is None:
         raise ValueError("At least one change detection mask must be enabled")
 
@@ -746,6 +802,12 @@ def run_pipeline_images(ref_bgr: np.ndarray, cur_bgr: np.ndarray, cfg: PipelineC
 
     # --- Morphology cleanup ---
     cleaned = combined
+    if cfg.enable_edge_fill:
+        cleaned = apply_edge_fill(
+            cleaned,
+            thicken_ksize=cfg.edge_thicken_ksize,
+            close_ksize=cfg.edge_fill_close_ksize
+        )
     if cfg.enable_morphology:
         cleaned = apply_morphology(
             cleaned,
@@ -755,7 +817,11 @@ def run_pipeline_images(ref_bgr: np.ndarray, cur_bgr: np.ndarray, cfg: PipelineC
         )
 
     # --- Find contours / boxes ---
-    boxes = find_bounding_boxes(cleaned)
+    if cfg.merge_close_boxes and cfg.merge_mode.lower() == "mask":
+        merged_mask = dilate_mask(cleaned, cfg.merge_mask_ksize)
+        boxes = find_bounding_boxes(merged_mask)
+    else:
+        boxes = find_bounding_boxes(cleaned)
 
     # --- Filter boxes ---
     boxes = filter_boxes(
@@ -764,7 +830,7 @@ def run_pipeline_images(ref_bgr: np.ndarray, cur_bgr: np.ndarray, cfg: PipelineC
         floor_roi_mask=floor_mask,
         cfg=cfg
     )
-    if cfg.merge_close_boxes:
+    if cfg.merge_close_boxes and cfg.merge_mode.lower() == "bbox":
         boxes = merge_boxes(boxes, cfg.merge_distance)
 
     # --- Draw results ---
@@ -780,6 +846,8 @@ def run_pipeline_images(ref_bgr: np.ndarray, cur_bgr: np.ndarray, cfg: PipelineC
             debug_show("Mask - Edge Diff", m_edge, cfg)
         if m_texture is not None:
             debug_show("Mask - Texture Diff", m_texture, cfg)
+        if m_local_contrast is not None:
+            debug_show("Mask - Local Contrast", m_local_contrast, cfg)
         if m_shadow is not None:
             debug_show("Mask - Shadow", m_shadow, cfg)
         if floor_mask is not None:
@@ -794,6 +862,7 @@ def run_pipeline_images(ref_bgr: np.ndarray, cur_bgr: np.ndarray, cfg: PipelineC
             ("Mask - Chroma", m_chroma if m_chroma is not None else np.zeros_like(cleaned)),
             ("Mask - Edge", m_edge if m_edge is not None else np.zeros_like(cleaned)),
             ("Mask - Texture", m_texture if m_texture is not None else np.zeros_like(cleaned)),
+            ("Mask - Local Contrast", m_local_contrast if m_local_contrast is not None else np.zeros_like(cleaned)),
             ("Mask - Shadow", m_shadow if m_shadow is not None else np.zeros_like(cleaned)),
             ("Floor ROI", floor_mask if floor_mask is not None else np.zeros_like(cleaned)),
             ("Mask - Combined", combined),
@@ -808,6 +877,7 @@ def run_pipeline_images(ref_bgr: np.ndarray, cur_bgr: np.ndarray, cfg: PipelineC
         "mask_chroma": m_chroma if m_chroma is not None else np.zeros_like(cleaned),
         "mask_edge": m_edge if m_edge is not None else np.zeros_like(cleaned),
         "mask_texture": m_texture if m_texture is not None else np.zeros_like(cleaned),
+        "mask_local_contrast": m_local_contrast if m_local_contrast is not None else np.zeros_like(cleaned),
         "mask_shadow": m_shadow if m_shadow is not None else np.zeros_like(cleaned),
         "floor_mask": floor_mask if floor_mask is not None else np.zeros_like(cleaned),
         "mask_combined": combined,
