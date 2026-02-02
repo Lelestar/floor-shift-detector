@@ -22,6 +22,7 @@ PARAM_KEYS = {
     "color_space": "params_color_space",
     "enable_clahe": "params_enable_clahe",
     "enable_floor_roi": "params_enable_floor_roi",
+    "floor_roi_mode": "params_floor_roi_mode",
     "floor_seed_ratio": "params_floor_seed_ratio",
     "floor_seed_x_ratio": "params_floor_seed_x_ratio",
     "floor_seed_luma_clip_low": "params_floor_seed_luma_clip_low",
@@ -133,6 +134,16 @@ def filter_current_paths(paths: List[str]) -> List[str]:
     return out
 
 
+def infer_mask_path(ref_path: str) -> Optional[str]:
+    if not ref_path:
+        return None
+    scene = Path(ref_path).parent.name
+    if not scene:
+        return None
+    mask_path = Path("masks") / f"{scene}.png"
+    return str(mask_path) if mask_path.exists() else None
+
+
 def init_param_defaults(cfg: PipelineConfig) -> None:
     defaults = {
         PARAM_KEYS["enable_resize"]: cfg.enable_resize,
@@ -140,6 +151,7 @@ def init_param_defaults(cfg: PipelineConfig) -> None:
         PARAM_KEYS["color_space"]: cfg.color_space,
         PARAM_KEYS["enable_clahe"]: cfg.enable_clahe_on_luminance,
         PARAM_KEYS["enable_floor_roi"]: cfg.enable_floor_roi,
+        PARAM_KEYS["floor_roi_mode"]: cfg.floor_roi_mode,
         PARAM_KEYS["floor_seed_ratio"]: float(cfg.floor_seed_ratio),
         PARAM_KEYS["floor_seed_x_ratio"]: float(cfg.floor_seed_x_ratio),
         PARAM_KEYS["floor_seed_luma_clip_low"]: float(cfg.floor_seed_luma_clip_low),
@@ -214,6 +226,7 @@ def build_config() -> PipelineConfig:
             "enable_local_contrast_diff",
             "local_contrast_diff_thresh",
             "local_contrast_ksize",
+            "floor_roi_mode",
             "floor_seed_ratio",
             "floor_seed_x_ratio",
             "floor_seed_luma_clip_low",
@@ -250,6 +263,7 @@ def build_config() -> PipelineConfig:
     init_param_defaults(cfg)
 
     st.sidebar.markdown("### Settings")
+
     with st.sidebar.form("params_form"):
         with st.expander("Pipeline settings", expanded=False):
             enable_resize = st.checkbox(
@@ -279,171 +293,186 @@ def build_config() -> PipelineConfig:
                 help="Normalize lighting on the luminance channel.",
             )
 
-        with st.expander("Floor ROI (multicluster)", expanded=False):
+        expander_title = (
+            "Floor ROI (multicluster)"
+            if st.session_state[PARAM_KEYS["floor_roi_mode"]] == "detection"
+            else "Floor ROI (mask)"
+        )
+        with st.expander(expander_title, expanded=False):
             enable_floor_roi = st.checkbox(
                 "Enable floor ROI",
                 key=PARAM_KEYS["enable_floor_roi"],
                 help="Restrict detection to the estimated floor mask.",
             )
-            floor_seed_ratio = st.slider(
-                "Floor seed ratio (bottom band)",
-                0.05,
-                0.5,
-                step=0.05,
-                key=PARAM_KEYS["floor_seed_ratio"],
-                help="Bottom band used to learn floor appearance.",
+            floor_roi_mode = st.selectbox(
+                "Floor ROI mode",
+                ["detection", "mask"],
+                index=0 if st.session_state[PARAM_KEYS["floor_roi_mode"]] == "detection" else 1,
+                key=PARAM_KEYS["floor_roi_mode"],
+                help="Detection = multicluster, Mask = use provided mask file.",
             )
-            floor_seed_x_ratio = st.slider(
-                "Floor seed width ratio",
-                0.3,
-                1.0,
-                step=0.05,
-                key=PARAM_KEYS["floor_seed_x_ratio"],
-                help="Fraction of image width used for the seed (centered).",
-            )
-            floor_seed_luma_clip_low = st.slider(
-                "Seed luma clip low (quantile)",
-                0.0,
-                0.3,
-                step=0.01,
-                key=PARAM_KEYS["floor_seed_luma_clip_low"],
-                help="Discard the darkest seed pixels (0 = keep all).",
-            )
-            floor_seed_luma_clip_high = st.slider(
-                "Seed luma clip high (quantile)",
-                0.7,
-                1.0,
-                step=0.01,
-                key=PARAM_KEYS["floor_seed_luma_clip_high"],
-                help="Discard the brightest seed pixels (1 = keep all).",
-            )
-            floor_k = st.slider(
-                "Number of clusters (K)",
-                1,
-                6,
-                step=1,
-                key=PARAM_KEYS["floor_k"],
-                help="Number of appearance clusters learned from the bottom band.",
-            )
-            floor_seed_quantile = st.slider(
-                "Seed distance quantile",
-                0.5,
-                0.99,
-                step=0.01,
-                key=PARAM_KEYS["floor_seed_quantile"],
-                help="Threshold: higher keeps more pixels as floor.",
-            )
-            floor_mask_override = st.checkbox(
-                "Use floor mask override",
-                key=PARAM_KEYS["floor_mask_override"],
-                help="Use a fixed mask file instead of automatic floor detection.",
-            )
-            mask_paths = collect_image_paths(Path("masks"))
-            if mask_paths:
-                floor_mask_override_path = st.selectbox(
-                    "Floor mask path",
-                    mask_paths,
-                    index=0,
-                    key=PARAM_KEYS["floor_mask_override_path"],
-                    help="Binary mask (white=floor) from masks/ folder.",
+            if floor_roi_mode == "detection":
+                floor_seed_ratio = st.slider(
+                    "Floor seed ratio (bottom band)",
+                    0.05,
+                    0.5,
+                    step=0.05,
+                    key=PARAM_KEYS["floor_seed_ratio"],
+                    help="Bottom band used to learn floor appearance.",
                 )
-            else:
-                floor_mask_override_path = st.text_input(
-                    "Floor mask path",
-                    key=PARAM_KEYS["floor_mask_override_path"],
-                    help="Path to a binary mask (white=floor).",
-                )
-            floor_l_norm = st.selectbox(
-                "L normalization",
-                ["none", "global", "seed"],
-                index=["none", "global", "seed"].index(st.session_state[PARAM_KEYS["floor_l_norm"]]),
-                key=PARAM_KEYS["floor_l_norm"],
-                help="Normalize L to reduce lighting differences.",
-            )
-            floor_expand_enabled = st.checkbox(
-                "Local expansion",
-                key=PARAM_KEYS["floor_expand_enabled"],
-                help="Expand the floor mask around confident regions.",
-            )
-            floor_expand_quantile = st.slider(
-                "Expansion quantile",
-                0.9,
-                0.995,
-                step=0.005,
-                key=PARAM_KEYS["floor_expand_quantile"],
-                help="Relaxed threshold used during expansion.",
-            )
-            floor_expand_ksize = st.slider(
-                "Expansion kernel",
-                3,
-                31,
-                step=2,
-                key=PARAM_KEYS["floor_expand_ksize"],
-                help="Size of the dilation kernel for expansion area.",
-            )
-
-            with st.expander("Floor ROI advanced", expanded=False):
-                floor_texture_window = st.slider(
-                    "Texture window",
-                    5,
-                    25,
-                    step=2,
-                    key=PARAM_KEYS["floor_texture_window"],
-                    help="Window size for the texture map (odd).",
-                )
-                floor_texture_blur = st.slider(
-                    "Texture blur",
-                    0,
-                    15,
-                    step=1,
-                    key=PARAM_KEYS["floor_texture_blur"],
-                    help="Pre-blur before computing gradients (0 = none).",
-                )
-                floor_w_l = st.slider(
-                    "Weight L",
-                    0.0,
+                floor_seed_x_ratio = st.slider(
+                    "Floor seed width ratio",
+                    0.3,
                     1.0,
                     step=0.05,
-                    key=PARAM_KEYS["floor_w_l"],
-                    help="Weight for luminance in the floor feature vector.",
+                    key=PARAM_KEYS["floor_seed_x_ratio"],
+                    help="Fraction of image width used for the seed (centered).",
                 )
-                floor_w_ab = st.slider(
-                    "Weight a,b",
+                floor_seed_luma_clip_low = st.slider(
+                    "Seed luma clip low (quantile)",
                     0.0,
-                    2.0,
-                    step=0.05,
-                    key=PARAM_KEYS["floor_w_ab"],
-                    help="Weight for chroma (a,b) in the floor feature vector.",
+                    0.3,
+                    step=0.01,
+                    key=PARAM_KEYS["floor_seed_luma_clip_low"],
+                    help="Discard the darkest seed pixels (0 = keep all).",
                 )
-                floor_w_tex = st.slider(
-                    "Weight texture",
-                    0.0,
-                    2.0,
-                    step=0.05,
-                    key=PARAM_KEYS["floor_w_tex"],
-                    help="Weight for texture in the floor feature vector.",
+                floor_seed_luma_clip_high = st.slider(
+                    "Seed luma clip high (quantile)",
+                    0.7,
+                    1.0,
+                    step=0.01,
+                    key=PARAM_KEYS["floor_seed_luma_clip_high"],
+                    help="Discard the brightest seed pixels (1 = keep all).",
                 )
-                floor_clean_close_ksize = st.slider(
-                    "Floor mask close kernel",
+                floor_k = st.slider(
+                    "Number of clusters (K)",
                     1,
-                    25,
+                    6,
+                    step=1,
+                    key=PARAM_KEYS["floor_k"],
+                    help="Number of appearance clusters learned from the bottom band.",
+                )
+                floor_seed_quantile = st.slider(
+                    "Seed distance quantile",
+                    0.5,
+                    0.99,
+                    step=0.01,
+                    key=PARAM_KEYS["floor_seed_quantile"],
+                    help="Threshold: higher keeps more pixels as floor.",
+                )
+                floor_mask_override_path = st.session_state.get(PARAM_KEYS["floor_mask_override_path"], "")
+
+                floor_l_norm = st.selectbox(
+                    "L normalization",
+                    ["none", "global", "seed"],
+                    index=["none", "global", "seed"].index(st.session_state[PARAM_KEYS["floor_l_norm"]]),
+                    key=PARAM_KEYS["floor_l_norm"],
+                    help="Normalize L to reduce lighting differences.",
+                )
+                floor_expand_enabled = st.checkbox(
+                    "Local expansion",
+                    key=PARAM_KEYS["floor_expand_enabled"],
+                    help="Expand the floor mask around confident regions.",
+                )
+                floor_expand_quantile = st.slider(
+                    "Expansion quantile",
+                    0.9,
+                    0.995,
+                    step=0.005,
+                    key=PARAM_KEYS["floor_expand_quantile"],
+                    help="Relaxed threshold used during expansion.",
+                )
+                floor_expand_ksize = st.slider(
+                    "Expansion kernel",
+                    3,
+                    31,
                     step=2,
-                    key=PARAM_KEYS["floor_clean_close_ksize"],
-                    help="Fill small holes in the floor mask.",
+                    key=PARAM_KEYS["floor_expand_ksize"],
+                    help="Size of the dilation kernel for expansion area.",
                 )
-                floor_clean_open_ksize = st.slider(
-                    "Floor mask open kernel",
-                    1,
-                    25,
-                    step=2,
-                    key=PARAM_KEYS["floor_clean_open_ksize"],
-                    help="Remove small noisy regions in the floor mask.",
-                )
-                floor_keep_bottom_connected = st.checkbox(
-                    "Keep only components touching bottom",
-                    key=PARAM_KEYS["floor_keep_bottom_connected"],
-                    help="Keep only regions connected to the bottom row.",
-                )
+
+                with st.expander("Floor ROI advanced", expanded=False):
+                    floor_texture_window = st.slider(
+                        "Texture window",
+                        5,
+                        25,
+                        step=2,
+                        key=PARAM_KEYS["floor_texture_window"],
+                        help="Window size for the texture map (odd).",
+                    )
+                    floor_texture_blur = st.slider(
+                        "Texture blur",
+                        0,
+                        15,
+                        step=1,
+                        key=PARAM_KEYS["floor_texture_blur"],
+                        help="Pre-blur before computing gradients (0 = none).",
+                    )
+                    floor_w_l = st.slider(
+                        "Weight L",
+                        0.0,
+                        1.0,
+                        step=0.05,
+                        key=PARAM_KEYS["floor_w_l"],
+                        help="Weight for luminance in the floor feature vector.",
+                    )
+                    floor_w_ab = st.slider(
+                        "Weight a,b",
+                        0.0,
+                        2.0,
+                        step=0.05,
+                        key=PARAM_KEYS["floor_w_ab"],
+                        help="Weight for chroma (a,b) in the floor feature vector.",
+                    )
+                    floor_w_tex = st.slider(
+                        "Weight texture",
+                        0.0,
+                        2.0,
+                        step=0.05,
+                        key=PARAM_KEYS["floor_w_tex"],
+                        help="Weight for texture in the floor feature vector.",
+                    )
+                    floor_clean_close_ksize = st.slider(
+                        "Floor mask close kernel",
+                        1,
+                        25,
+                        step=2,
+                        key=PARAM_KEYS["floor_clean_close_ksize"],
+                        help="Fill small holes in the floor mask.",
+                    )
+                    floor_clean_open_ksize = st.slider(
+                        "Floor mask open kernel",
+                        1,
+                        25,
+                        step=2,
+                        key=PARAM_KEYS["floor_clean_open_ksize"],
+                        help="Remove small noisy regions in the floor mask.",
+                    )
+                    floor_keep_bottom_connected = st.checkbox(
+                        "Keep only components touching bottom",
+                        key=PARAM_KEYS["floor_keep_bottom_connected"],
+                        help="Keep only regions connected to the bottom row.",
+                    )
+            else:
+                floor_seed_ratio = st.session_state[PARAM_KEYS["floor_seed_ratio"]]
+                floor_seed_x_ratio = st.session_state[PARAM_KEYS["floor_seed_x_ratio"]]
+                floor_seed_luma_clip_low = st.session_state[PARAM_KEYS["floor_seed_luma_clip_low"]]
+                floor_seed_luma_clip_high = st.session_state[PARAM_KEYS["floor_seed_luma_clip_high"]]
+                floor_k = st.session_state[PARAM_KEYS["floor_k"]]
+                floor_seed_quantile = st.session_state[PARAM_KEYS["floor_seed_quantile"]]
+                floor_l_norm = st.session_state[PARAM_KEYS["floor_l_norm"]]
+                floor_expand_enabled = st.session_state[PARAM_KEYS["floor_expand_enabled"]]
+                floor_expand_quantile = st.session_state[PARAM_KEYS["floor_expand_quantile"]]
+                floor_expand_ksize = st.session_state[PARAM_KEYS["floor_expand_ksize"]]
+                floor_texture_window = st.session_state[PARAM_KEYS["floor_texture_window"]]
+                floor_texture_blur = st.session_state[PARAM_KEYS["floor_texture_blur"]]
+                floor_w_l = st.session_state[PARAM_KEYS["floor_w_l"]]
+                floor_w_ab = st.session_state[PARAM_KEYS["floor_w_ab"]]
+                floor_w_tex = st.session_state[PARAM_KEYS["floor_w_tex"]]
+                floor_clean_close_ksize = st.session_state[PARAM_KEYS["floor_clean_close_ksize"]]
+                floor_clean_open_ksize = st.session_state[PARAM_KEYS["floor_clean_open_ksize"]]
+                floor_keep_bottom_connected = st.session_state[PARAM_KEYS["floor_keep_bottom_connected"]]
+                floor_mask_override_path = ""
 
         with st.expander("Change detection", expanded=False):
             enable_chroma_diff = st.checkbox(
@@ -702,7 +731,8 @@ def build_config() -> PipelineConfig:
             floor_w_l=floor_w_l,
             floor_w_ab=floor_w_ab,
             floor_w_tex=floor_w_tex,
-            floor_mask_override_path=floor_mask_override_path if floor_mask_override else None,
+            floor_roi_mode=floor_roi_mode,
+            floor_mask_override_path=floor_mask_override_path if floor_roi_mode == "mask" else None,
             floor_clean_close_ksize=ensure_odd(floor_clean_close_ksize),
             floor_clean_open_ksize=ensure_odd(floor_clean_open_ksize),
             floor_keep_bottom_connected=floor_keep_bottom_connected,
@@ -753,7 +783,7 @@ def main() -> None:
     cfg = build_config()
 
     st.sidebar.markdown("### Images")
-    source = st.sidebar.radio("Input source", ["Upload", "Local file"], index=0)
+    source = st.sidebar.radio("Input source", ["Upload", "Local file"], index=1)
 
     ref_bgr = None
     cur_bgr = None
@@ -766,11 +796,15 @@ def main() -> None:
     else:
         image_paths = collect_image_paths(Path("Images"))
         ref_paths = filter_reference_paths(image_paths)
-        cur_paths = filter_current_paths(image_paths)
         if ref_paths:
             ref_path = st.sidebar.selectbox("Reference image path", ref_paths, index=0)
         else:
             ref_path = st.sidebar.text_input("Reference image path", "Images/Chambre/Reference.jpg")
+        ref_dir = Path(ref_path).parent if ref_path else None
+        if ref_dir and ref_dir.exists():
+            cur_paths = filter_current_paths([p for p in image_paths if Path(p).parent == ref_dir])
+        else:
+            cur_paths = filter_current_paths(image_paths)
         if cur_paths:
             cur_path = st.sidebar.selectbox("Current image path", cur_paths, index=0)
         else:
@@ -782,6 +816,13 @@ def main() -> None:
         st.info("Provide both a reference and a current image to run the pipeline.")
         return
 
+    if cfg.enable_floor_roi and cfg.floor_roi_mode == "mask":
+        inferred = infer_mask_path(ref_path) if source == "Local file" else None
+        if inferred:
+            cfg.floor_mask_override_path = inferred
+        elif not cfg.floor_mask_override_path:
+            st.warning("No mask found for this reference image in masks/ (expected masks/<Scene>.png).")
+
     with st.spinner("Running pipeline..."):
         try:
             outputs = run_pipeline_images(ref_bgr, cur_bgr, cfg)
@@ -791,7 +832,7 @@ def main() -> None:
 
     result = outputs["result"]
     st.subheader("Result")
-    st.image(to_display(result), width="stretch")
+    st.image(to_display(result), width=900)
 
     ok, png = cv2.imencode(".png", result)
     if ok:

@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from typing import List, Tuple, Optional, Dict
 import cv2
 import numpy as np
+import argparse
+from pathlib import Path
 
 
 # -----------------------------
@@ -34,6 +36,7 @@ class PipelineConfig:
     # Quick heuristic: floor is the bottom portion of the image.
     # You can later replace by a polygon mask or an auto segmentation.
     enable_floor_roi: bool = True
+    floor_roi_mode: str = "detection"  # "detection" or "mask"
     floor_roi_ratio: float = 0.45  # bottom 45% of the image
     floor_seed_ratio: float = 0.2  # bottom band for multicluster seed
     floor_seed_x_ratio: float = 0.65 # fraction of width used for seed (centered)
@@ -57,7 +60,7 @@ class PipelineConfig:
     floor_min_seed_pixels: int = 500
 
     # --- Change detection (diff) ---
-    enable_chroma_diff: bool = True
+    enable_chroma_diff: bool = False
     enable_edge_diff: bool = True
     enable_texture_diff: bool = True
     enable_local_contrast_diff: bool = False
@@ -80,8 +83,8 @@ class PipelineConfig:
     morph_close_ksize: int = 17
     morph_open_ksize: int = 5
     morph_iterations: int = 1
-    enable_edge_fill: bool = False
-    edge_thicken_ksize: int = 5
+    enable_edge_fill: bool = True
+    edge_thicken_ksize: int = 3
     edge_fill_close_ksize: int = 11
 
     # --- Connected components / contours filtering ---
@@ -101,7 +104,7 @@ class PipelineConfig:
 
     # --- Debug ---
     show_debug_windows: bool = True
-    debug_scale: float = 1.0  # 0.5 for smaller windows
+    debug_scale: float = 0.3
     debug_mode: str = "grid"  # "grid" or "windows"
     debug_grid_cols: int = 3
     debug_grid_pad: int = 8
@@ -756,7 +759,10 @@ def run_pipeline_images(ref_bgr: np.ndarray, cur_bgr: np.ndarray, cfg: PipelineC
     # --- Floor ROI mask ---
     floor_mask = None
     if cfg.enable_floor_roi:
-        if cfg.floor_mask_override_path:
+        mode = cfg.floor_roi_mode.lower()
+        if mode == "mask":
+            if not cfg.floor_mask_override_path:
+                raise ValueError("floor_roi_mode=mask requires floor_mask_override_path")
             override = cv2.imread(cfg.floor_mask_override_path, cv2.IMREAD_GRAYSCALE)
             if override is None:
                 raise FileNotFoundError(f"Could not read floor mask: {cfg.floor_mask_override_path}")
@@ -883,16 +889,22 @@ def run_pipeline_images(ref_bgr: np.ndarray, cur_bgr: np.ndarray, cfg: PipelineC
         items = [
             ("Reference", ref_bgr),
             ("Current", cur_bgr),
-            ("Mask - Chroma", m_chroma if m_chroma is not None else np.zeros_like(cleaned)),
-            ("Mask - Edge", m_edge if m_edge is not None else np.zeros_like(cleaned)),
-            ("Mask - Texture", m_texture if m_texture is not None else np.zeros_like(cleaned)),
-            ("Mask - Local Contrast", m_local_contrast if m_local_contrast is not None else np.zeros_like(cleaned)),
-            ("Mask - Shadow", m_shadow if m_shadow is not None else np.zeros_like(cleaned)),
-            ("Floor ROI", floor_mask if floor_mask is not None else np.zeros_like(cleaned)),
-            ("Mask - Combined", combined),
-            ("Mask - Cleaned", cleaned),
-            ("Result", result)
         ]
+        if m_chroma is not None:
+            items.append(("Mask - Chroma", m_chroma))
+        if m_edge is not None:
+            items.append(("Mask - Edge", m_edge))
+        if m_texture is not None:
+            items.append(("Mask - Texture", m_texture))
+        if m_local_contrast is not None:
+            items.append(("Mask - Local Contrast", m_local_contrast))
+        if m_shadow is not None:
+            items.append(("Mask - Shadow", m_shadow))
+        if floor_mask is not None:
+            items.append(("Floor ROI", floor_mask))
+        items.append(("Mask - Combined", combined))
+        items.append(("Mask - Cleaned", cleaned))
+        items.append(("Result", result))
         debug_show_grid(items, cfg)
 
     return {
@@ -923,45 +935,45 @@ def run_pipeline(ref_path: str, cur_path: str, cfg: PipelineConfig) -> Dict[str,
     return run_pipeline_images(ref_bgr, cur_bgr, cfg)
 
 
+def infer_mask_path(ref_path: str) -> Optional[str]:
+    if not ref_path:
+        return None
+    scene = Path(ref_path).parent.name
+    if not scene:
+        return None
+    mask_path = Path("masks") / f"{scene}.png"
+    return str(mask_path) if mask_path.exists() else None
+
+
 def main() -> None:
-    # Example usage (replace paths with your own)
-    ref_path = "Images/Chambre/Reference.jpg"
-    cur_path = "Images/Chambre/IMG_6567.jpg"
+    parser = argparse.ArgumentParser(description="FloorShiftDetector CLI")
+    parser.add_argument("--ref", default="Images/Bedroom/Reference.JPG", help="Reference image path")
+    parser.add_argument("--cur", default="Images/Bedroom/IMG_6567.JPG", help="Current image path")
+    parser.add_argument("--floor-roi-mode", choices=["detection", "mask"], default="detection", help="Floor ROI mode")
+    parser.add_argument("--debug", action="store_true", help="Show debug windows")
+    parser.add_argument("--save-result", default="", help="Path to save result image")
+    args = parser.parse_args()
 
-    cfg = PipelineConfig(
-        enable_resize=True,
-        target_width=960,
-        color_space="LAB",
-        enable_clahe_on_luminance=True,
-        enable_floor_roi=True,
-        floor_roi_ratio=0.45,
-        enable_chroma_diff=True,
-        enable_edge_diff=True,
-        enable_texture_diff=False,
-        enable_shadow_mask=False,
-        chroma_diff_thresh=25,
-        edge_diff_thresh=40,
-        texture_diff_thresh=20,
-        shadow_luma_thresh=25,
-        shadow_chroma_small_thresh=10,
-        combine_mode="OR",
-        enable_morphology=True,
-        morph_close_ksize=9,
-        morph_open_ksize=5,
-        morph_iterations=1,
-        min_area=350,
-        max_area=200000,
-        show_debug_windows=True,
-        debug_mode="grid",
-        debug_scale=0.5,
-        debug_grid_cols=3
-    )
+    cfg = PipelineConfig(show_debug_windows=args.debug, debug_mode="grid")
+    cfg.floor_roi_mode = args.floor_roi_mode
+    if cfg.enable_floor_roi and cfg.floor_roi_mode == "mask":
+        mask_path = infer_mask_path(args.ref)
+        if not mask_path:
+            raise FileNotFoundError("No mask found for this reference image in masks/ (expected masks/<Scene>.png).")
+        cfg.floor_mask_override_path = mask_path
 
-    _ = run_pipeline(ref_path, cur_path, cfg)
+    outputs = run_pipeline(args.ref, args.cur, cfg)
 
-    # Press any key to close windows
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    if args.save_result:
+        cv2.imwrite(args.save_result, outputs["result"])
+
+    if not args.debug:
+        cv2.imshow("Result", outputs["result"])
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+    else:
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
