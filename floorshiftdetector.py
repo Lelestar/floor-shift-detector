@@ -632,6 +632,29 @@ def dilate_mask(mask: np.ndarray, ksize: int) -> np.ndarray:
     return cv2.dilate(mask, kernel, iterations=1)
 
 
+def refine_boxes_to_mask(
+    boxes: List[Tuple[int, int, int, int]],
+    mask: np.ndarray
+) -> List[Tuple[int, int, int, int]]:
+    refined: List[Tuple[int, int, int, int]] = []
+    h, w = mask.shape[:2]
+    for x, y, bw, bh in boxes:
+        x1 = max(0, x)
+        y1 = max(0, y)
+        x2 = min(w, x + bw)
+        y2 = min(h, y + bh)
+        roi = mask[y1:y2, x1:x2]
+        ys, xs = np.where(roi > 0)
+        if ys.size == 0:
+            continue
+        rx1 = x1 + int(xs.min())
+        ry1 = y1 + int(ys.min())
+        rx2 = x1 + int(xs.max()) + 1
+        ry2 = y1 + int(ys.max()) + 1
+        refined.append((rx1, ry1, rx2 - rx1, ry2 - ry1))
+    return refined
+
+
 def draw_boxes(image: np.ndarray, boxes: List[Tuple[int, int, int, int]]) -> np.ndarray:
     out = image.copy()
     for (x, y, w, h) in boxes:
@@ -820,6 +843,7 @@ def run_pipeline_images(ref_bgr: np.ndarray, cur_bgr: np.ndarray, cfg: PipelineC
     if cfg.merge_close_boxes and cfg.merge_mode.lower() == "mask":
         merged_mask = dilate_mask(cleaned, cfg.merge_mask_ksize)
         boxes = find_bounding_boxes(merged_mask)
+        boxes = refine_boxes_to_mask(boxes, cleaned)
     else:
         boxes = find_bounding_boxes(cleaned)
 
