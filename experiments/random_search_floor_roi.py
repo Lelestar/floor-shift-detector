@@ -25,13 +25,15 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from floorshiftdetector import PipelineConfig, floor_mask_multicluster
+from pipeline.config import PipelineConfig
+from pipeline.roi import floor_mask_multicluster
 
 
 SCENES = ["Bedroom", "Kitchen", "LivingRoom"]
 
 
 def load_pair(scene: str) -> Tuple[np.ndarray, np.ndarray]:
+    """Load a reference image and its binary floor mask for one scene."""
     img_path = Path("Images") / scene / "Reference.JPG"
     mask_path = Path("masks") / f"{scene}.png"
     img = cv2.imread(str(img_path), cv2.IMREAD_COLOR)
@@ -45,6 +47,7 @@ def load_pair(scene: str) -> Tuple[np.ndarray, np.ndarray]:
 
 
 def iou(pred: np.ndarray, target: np.ndarray) -> float:
+    """Compute IoU between two binary masks."""
     pred_bin = pred > 0
     target_bin = target > 0
     inter = np.logical_and(pred_bin, target_bin).sum()
@@ -55,6 +58,7 @@ def iou(pred: np.ndarray, target: np.ndarray) -> float:
 
 
 def sample_params(rng: np.random.Generator) -> Dict[str, object]:
+    """Sample a random configuration for floor ROI parameters."""
     return {
         "floor_seed_ratio": rng.uniform(0.15, 0.4),
         "floor_seed_x_ratio": rng.uniform(0.5, 1.0),
@@ -75,6 +79,7 @@ def sample_params(rng: np.random.Generator) -> Dict[str, object]:
 
 
 def build_cfg(params: Dict[str, object]) -> PipelineConfig:
+    """Build a PipelineConfig from a parameter dict."""
     cfg = PipelineConfig(show_debug_windows=False)
     for k, v in params.items():
         setattr(cfg, k, v)
@@ -82,6 +87,7 @@ def build_cfg(params: Dict[str, object]) -> PipelineConfig:
 
 
 def evaluate(cfg: PipelineConfig, data: List[Tuple[np.ndarray, np.ndarray]]) -> float:
+    """Evaluate mean IoU of a config across all scenes."""
     scores = []
     for img, gt in data:
         pred = floor_mask_multicluster(img, cfg)
@@ -92,6 +98,7 @@ def evaluate(cfg: PipelineConfig, data: List[Tuple[np.ndarray, np.ndarray]]) -> 
 
 
 def overlay_mask(bgr: np.ndarray, mask: np.ndarray, color: Tuple[int, int, int]) -> np.ndarray:
+    """Overlay a binary mask on top of the image with a fixed color."""
     out = bgr.copy()
     color_img = np.zeros_like(out)
     color_img[:] = color
@@ -101,6 +108,7 @@ def overlay_mask(bgr: np.ndarray, mask: np.ndarray, color: Tuple[int, int, int])
 
 
 def save_report(cfg: PipelineConfig, data: List[Tuple[np.ndarray, np.ndarray]], out_dir: Path) -> Dict[str, float]:
+    """Save per-scene overlays and return per-scene IoU scores."""
     out_dir.mkdir(parents=True, exist_ok=True)
     per_scene: Dict[str, float] = {}
     for scene, (img, gt) in zip(SCENES, data):
@@ -122,14 +130,35 @@ def save_report(cfg: PipelineConfig, data: List[Tuple[np.ndarray, np.ndarray]], 
 
 
 def main() -> None:
+    """CLI entry point for randomized floor ROI search."""
     parser = argparse.ArgumentParser(description="Random search for floor ROI params.")
     parser.add_argument("--iters", type=int, default=200, help="Number of random trials.")
     parser.add_argument("--seed", type=int, default=123, help="Random seed.")
     parser.add_argument("--out", default="experiments/best_params.txt", help="Output file.")
     parser.add_argument("--report-dir", default="experiments/best_report", help="Report output directory.")
+    parser.add_argument(
+        "--eval-current",
+        action="store_true",
+        help="Evaluate current PipelineConfig defaults and print per-scene IoU.",
+    )
     args = parser.parse_args()
 
+    cv2.setRNGSeed(args.seed)
     data = [load_pair(scene) for scene in SCENES]
+
+    if args.eval_current:
+        cfg = PipelineConfig(show_debug_windows=False)
+        per_scene = {}
+        for scene, (img, gt) in zip(SCENES, data):
+            pred = floor_mask_multicluster(img, cfg)
+            if pred.shape[:2] != gt.shape[:2]:
+                gt = cv2.resize(gt, (pred.shape[1], pred.shape[0]), interpolation=cv2.INTER_NEAREST)
+            per_scene[scene] = iou(pred, gt)
+        mean_iou = float(np.mean(list(per_scene.values()))) if per_scene else 0.0
+        print(f"mean_iou: {mean_iou:.4f}")
+        for scene, score in per_scene.items():
+            print(f"{scene}_iou: {score:.4f}")
+        return
 
     rng = np.random.default_rng(args.seed)
     best_score = -1.0

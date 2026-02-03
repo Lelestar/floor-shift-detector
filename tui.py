@@ -19,6 +19,7 @@ from floorshiftdetector import PipelineConfig, infer_mask_path, run_pipeline
 
 class RunClicked(Message):
     def __init__(self, ref: str, cur: str, mode: str, debug: bool, save: str) -> None:
+        """Message carrying the current form values."""
         super().__init__()
         self.ref = ref
         self.cur = cur
@@ -37,6 +38,7 @@ class FloorTUI(App):
     """
 
     def compose(self) -> ComposeResult:
+        """Build the TUI layout."""
         yield Header()
         with Vertical(id="panel"):
             yield Label("Reference image path (Reference.JPG)")
@@ -58,6 +60,7 @@ class FloorTUI(App):
         yield Footer()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle Run/Quit button presses."""
         if event.button.id == "quit":
             self.exit()
             return
@@ -70,6 +73,7 @@ class FloorTUI(App):
             self.post_message(RunClicked(ref, cur, mode, debug, save))
 
     def on_run_clicked(self, message: RunClicked) -> None:
+        """Run the pipeline with the submitted form values."""
         cfg = PipelineConfig(show_debug_windows=message.debug, debug_mode="grid")
         cfg.floor_roi_mode = message.mode
         if cfg.enable_floor_roi and cfg.floor_roi_mode == "mask":

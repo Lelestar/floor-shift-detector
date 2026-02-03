@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 import streamlit as st
 
-from floorshiftdetector import PipelineConfig, run_pipeline_images
+from pipeline import PipelineConfig, run_pipeline_images
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
