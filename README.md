@@ -63,7 +63,7 @@ Outputs:
 
 Mask creation:
 - `experiments/mask_creator.html` provides a simple in-browser mask painter.
-- Masks should be saved as `masks/<Scene>.png` (white = floor).
+- Masks should be saved as `masks/<0Scene>.png` (white = floor).
 
 ## Project structure
 - `pipeline/`: core pipeline (config, masks, ROI, boxes, run)

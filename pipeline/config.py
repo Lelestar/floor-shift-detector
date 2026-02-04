@@ -17,7 +17,7 @@ class PipelineConfig:
 
     # --- Floor ROI ---
     enable_floor_roi: bool = True  # enable floor region restriction
-    floor_roi_mode: str = "detection"  # "detection" or "mask"
+    floor_roi_mode: str = "mask"  # "detection" or "mask"
     floor_roi_ratio: float = 0.45  # bottom 45% of the image
     floor_seed_ratio: float = 0.38  # bottom band height for multicluster seed
     floor_seed_x_ratio: float = 0.92  # seed band width ratio (centered)

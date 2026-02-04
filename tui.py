@@ -48,7 +48,7 @@ class FloorTUI(App):
             yield Label("Floor ROI mode (mask auto-uses masks/<Scene>.png)")
             yield Select(
                 options=[("detection", "detection"), ("mask", "mask")],
-                value="detection",
+                value="mask",
                 id="mode",
             )
             yield Checkbox("Debug windows (grid)", id="debug", value=False)

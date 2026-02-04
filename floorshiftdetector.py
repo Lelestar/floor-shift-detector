@@ -29,7 +29,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="FloorShiftDetector CLI")
     parser.add_argument("--ref", default="Images/Bedroom/Reference.JPG", help="Reference image path")
     parser.add_argument("--cur", default="Images/Bedroom/IMG_6567.JPG", help="Current image path")
-    parser.add_argument("--floor-roi-mode", choices=["detection", "mask"], default="detection", help="Floor ROI mode")
+    parser.add_argument("--floor-roi-mode", choices=["detection", "mask"], default="mask", help="Floor ROI mode")
     parser.add_argument("--debug", action="store_true", help="Show debug windows")
     parser.add_argument("--save-result", default="", help="Path to save result image")
     args = parser.parse_args()
