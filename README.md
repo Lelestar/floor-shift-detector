@@ -48,9 +48,10 @@ The UI lets you:
 ## Experiments
 Randomized search for floor ROI parameters using ground-truth masks:
 ```bash
-python experiments/random_search_floor_roi.py --iters 200
+python experiments/random_search_floor_roi.py --images-dir /path/to/images --iters 200
 ```
 Command line arguments:
+- `images-dir PATH` directory with scene subfolders containing reference/current images
 - `--iters N` number of random parameter sets to try (default: 200)
 - `--seed S` random seed (default: 123)
 - `--report-dir PATH` output directory (default: `experiments/best_report/`)

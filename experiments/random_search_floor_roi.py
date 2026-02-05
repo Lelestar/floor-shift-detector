@@ -2,7 +2,7 @@
 Randomized search to optimize floor ROI parameters against ground-truth masks.
 
 Assumes:
-  - Reference images: Images/<Scene>/Reference.JPG
+  - Reference images: <ImagesDir>/<Scene>/Reference.JPG
   - Masks: masks/<Scene>.png (white = floor)
 
 Run:
@@ -28,13 +28,35 @@ if str(ROOT) not in sys.path:
 from pipeline.config import PipelineConfig
 from pipeline.roi import floor_mask_multicluster
 
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 
-SCENES = ["Bedroom", "Kitchen", "LivingRoom"]
+def discover_scenes(images_dir: Path) -> list[str]:
+    """Find scene folders containing a Reference image."""
+    scenes = []
+    if not images_dir.exists():
+        return scenes
+    for sub in images_dir.iterdir():
+        if not sub.is_dir():
+            continue
+        for ext in IMAGE_EXTS:
+            ref = sub / f"Reference{ext}"
+            if ref.exists():
+                scenes.append(sub.name)
+                break
+    return sorted(scenes)
 
 
-def load_pair(scene: str) -> Tuple[np.ndarray, np.ndarray]:
+def load_pair(scene: str, images_dir: Path) -> Tuple[np.ndarray, np.ndarray]:
     """Load a reference image and its binary floor mask for one scene."""
-    img_path = Path("Images") / scene / "Reference.JPG"
+    img_path = None
+    scene_dir = images_dir / scene
+    for ext in IMAGE_EXTS:
+        candidate = scene_dir / f"Reference{ext}"
+        if candidate.exists():
+            img_path = candidate
+            break
+    if img_path is None:
+        raise FileNotFoundError(f"Missing reference image in: {scene_dir}")
     mask_path = Path("masks") / f"{scene}.png"
     img = cv2.imread(str(img_path), cv2.IMREAD_COLOR)
     if img is None:
@@ -107,11 +129,11 @@ def overlay_mask(bgr: np.ndarray, mask: np.ndarray, color: Tuple[int, int, int])
     return out.astype(np.uint8)
 
 
-def save_report(cfg: PipelineConfig, data: List[Tuple[np.ndarray, np.ndarray]], out_dir: Path) -> Dict[str, float]:
+def save_report(cfg: PipelineConfig, data: List[Tuple[np.ndarray, np.ndarray]], out_dir: Path, scenes: List[str]) -> Dict[str, float]:
     """Save per-scene overlays and return per-scene IoU scores."""
     out_dir.mkdir(parents=True, exist_ok=True)
     per_scene: Dict[str, float] = {}
-    for scene, (img, gt) in zip(SCENES, data):
+    for scene, (img, gt) in zip(scenes, data):
         pred = floor_mask_multicluster(img, cfg)
         if pred.shape[:2] != gt.shape[:2]:
             gt = cv2.resize(gt, (pred.shape[1], pred.shape[0]), interpolation=cv2.INTER_NEAREST)
@@ -134,6 +156,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Random search for floor ROI params.")
     parser.add_argument("--iters", type=int, default=200, help="Number of random trials.")
     parser.add_argument("--seed", type=int, default=123, help="Random seed.")
+    parser.add_argument("--images-dir", default="Images", help="Images root folder.")
     parser.add_argument("--out", default="experiments/best_params.txt", help="Output file.")
     parser.add_argument("--report-dir", default="experiments/best_report", help="Report output directory.")
     parser.add_argument(
@@ -144,12 +167,16 @@ def main() -> None:
     args = parser.parse_args()
 
     cv2.setRNGSeed(args.seed)
-    data = [load_pair(scene) for scene in SCENES]
+    images_dir = Path(args.images_dir)
+    scenes = discover_scenes(images_dir)
+    if not scenes:
+        raise FileNotFoundError(f"No scenes found in: {images_dir}")
+    data = [load_pair(scene, images_dir) for scene in scenes]
 
     if args.eval_current:
         cfg = PipelineConfig(show_debug_windows=False)
         per_scene = {}
-        for scene, (img, gt) in zip(SCENES, data):
+        for scene, (img, gt) in zip(scenes, data):
             pred = floor_mask_multicluster(img, cfg)
             if pred.shape[:2] != gt.shape[:2]:
                 gt = cv2.resize(gt, (pred.shape[1], pred.shape[0]), interpolation=cv2.INTER_NEAREST)
@@ -178,7 +205,7 @@ def main() -> None:
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     report_dir = Path(args.report_dir)
-    per_scene = save_report(build_cfg(best_params), data, report_dir)
+    per_scene = save_report(build_cfg(best_params), data, report_dir, scenes)
 
     with out_path.open("w", encoding="utf-8") as f:
         f.write(f"best_score_mean_iou: {best_score:.4f}\n")
