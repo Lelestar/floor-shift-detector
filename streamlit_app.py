@@ -789,31 +789,60 @@ def main() -> None:
     cur_bgr = None
 
     if source == "Upload":
+        images_root = "Images"
         ref_file = st.sidebar.file_uploader("Reference image", type=list(IMAGE_EXTS))
         cur_file = st.sidebar.file_uploader("Current image", type=list(IMAGE_EXTS))
         ref_bgr = load_image_from_upload(ref_file)
         cur_bgr = load_image_from_upload(cur_file)
     else:
-        image_paths = collect_image_paths(Path("Images"))
-        ref_paths = filter_reference_paths(image_paths)
-        if ref_paths:
-            ref_path = st.sidebar.selectbox("Reference image path", ref_paths, index=0)
+        images_root = st.sidebar.text_input("Images folder path", "")
+        if images_root:
+            image_paths = collect_image_paths(Path(images_root))
+            ref_paths = filter_reference_paths(image_paths)
+            if ref_paths:
+                ref_labels = [f"{Path(p).parent.name}/{Path(p).name}" for p in ref_paths]
+                ref_choice = st.sidebar.selectbox("Reference image", ref_labels, index=0)
+                ref_path = ref_paths[ref_labels.index(ref_choice)]
+            else:
+                ref_path = st.sidebar.text_input("Reference image path", "")
+            ref_dir = Path(ref_path).parent if ref_path else None
+            if ref_dir and ref_dir.exists():
+                cur_paths = filter_current_paths([p for p in image_paths if Path(p).parent == ref_dir])
+            else:
+                cur_paths = filter_current_paths(image_paths)
+            if cur_paths:
+                cur_labels = [Path(p).name for p in cur_paths]
+                cur_choice = st.sidebar.selectbox("Current image", cur_labels, index=0)
+                cur_path = cur_paths[cur_labels.index(cur_choice)]
+            else:
+                cur_path = st.sidebar.text_input("Current image path", "")
         else:
-            ref_path = st.sidebar.text_input("Reference image path", "Images/Chambre/Reference.jpg")
-        ref_dir = Path(ref_path).parent if ref_path else None
-        if ref_dir and ref_dir.exists():
-            cur_paths = filter_current_paths([p for p in image_paths if Path(p).parent == ref_dir])
-        else:
-            cur_paths = filter_current_paths(image_paths)
-        if cur_paths:
-            cur_path = st.sidebar.selectbox("Current image path", cur_paths, index=0)
-        else:
-            cur_path = st.sidebar.text_input("Current image path", "Images/Chambre/IMG_6567.jpg")
+            ref_path = st.sidebar.text_input(
+                "Reference image path",
+                "",
+                disabled=True,
+                help="Set Images folder path first.",
+            )
+            cur_path = st.sidebar.text_input(
+                "Current image path",
+                "",
+                disabled=True,
+                help="Set Images folder path first.",
+            )
         ref_bgr = load_image_from_path(ref_path)
         cur_bgr = load_image_from_path(cur_path)
 
     if ref_bgr is None or cur_bgr is None:
         st.info("Provide both a reference and a current image to run the pipeline.")
+        if source == "Local file":
+            st.caption(
+                "Expected structure: <Images folder>/<Scene>/Reference.JPG and other images in the same folder. "
+                "Example: Images/Bedroom/Reference.JPG"
+            )
+        st.caption(
+            "If floor ROI mode is set to mask, provide masks/<Scene>.png. "
+            "You can create masks with experiments/mask_creator.html."
+        )
         return
 
     if cfg.enable_floor_roi and cfg.floor_roi_mode == "mask":
